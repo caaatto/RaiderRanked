@@ -1,0 +1,75 @@
+name: Update Thresholds
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install requests
+
+      - name: Compute thresholds
+        run: |
+          mkdir -p build
+          RR_OUTPUT_DIR=./build python3 scripts/update_thresholds.py
+
+      - name: Patch RankSystem.lua
+        run: python3 scripts/patch_addon.py RaiderRanked/RankSystem.lua build/thresholds.json
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if git diff --quiet RaiderRanked/RankSystem.lua; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No threshold changes, skipping upload."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --stat RaiderRanked/RankSystem.lua
+          fi
+
+      - name: Commit updated thresholds
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add RaiderRanked/RankSystem.lua
+          git commit -m "update thresholds $(date -u +%Y-%m-%d)"
+          git push
+
+      - name: Package addon
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          VERSION=$(date -u +%Y.%m.%d)
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          zip -r "RaiderRanked-${VERSION}.zip" RaiderRanked/ \
+            -x "RaiderRanked/Tools/*" "RaiderRanked/Debug/*" "RaiderRanked/tests/*"
+
+      - name: Upload to CurseForge
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          METADATA=$(jq -cn \
+            --arg cl "Threshold update ${VERSION}" \
+            --arg dn "RaiderRanked ${VERSION}" \
+            --argjson gv "[${{ vars.CF_GAME_VERSIONS }}]" \
+            '{changelog: $cl, changelogType: "text", displayName: $dn, gameVersions: $gv, releaseType: "release"}')
+
+          curl -f -X POST \
+            "https://wow.curseforge.com/api/projects/${{ vars.CF_PROJECT_ID }}/upload-file" \
+            -H "X-Api-Token: $CF_API_TOKEN" \
+            -F "metadata=$METADATA" \
+            -F "file=@RaiderRanked-${VERSION}.zip"

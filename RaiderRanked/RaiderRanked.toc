@@ -1,0 +1,14 @@
+## Interface: 120000, 120001, 120005
+## Title: RaiderRanked
+## Notes: League of Legends-style ranked system based on Raider.io Mythic+ scores
+## Author: RaiderRanked
+## Version: 1.0.0
+## SavedVariables: RaiderRankedDB
+## OptionalDeps: RaiderIO
+## X-ScoreSource: Blizzard C_PlayerInfo API (RaiderIO as fallback)
+
+RankSystem.lua
+Core.lua
+UI.lua
+Animation.lua
+Tests.lua

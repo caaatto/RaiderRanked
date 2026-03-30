@@ -1,0 +1,13 @@
+{
+  "name": "raiderranked-tools",
+  "version": "2.0.0",
+  "description": "Downloads LoL ranked WebM animations from CDN, extracts frames via FFmpeg, and composites PNG spritesheets for the RaiderRanked WoW addon",
+  "scripts": {
+    "render":     "node render-spritesheets.js all",
+    "render:one": "node render-spritesheets.js"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "sharp": "^0.33.0"
+  }
+}

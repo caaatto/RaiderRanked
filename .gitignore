@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env
+venv/
+build/
+*.tmp
+*.zip
+
+# Tools build artifacts
+RaiderRanked/Tools/node_modules/
+RaiderRanked/Tools/ffmpeg/
+RaiderRanked/Tools/frames/
