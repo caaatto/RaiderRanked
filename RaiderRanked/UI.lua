@@ -241,13 +241,40 @@ function RR:InitUI()
     self:InitUnitWings()
 end
 
+--- Returns the average M+ score across the current group (or just the player if solo).
+function RR:GetGroupAverageScore()
+    local units = GetGroupUnits()
+    local total, count = 0, 0
+    for _, unit in ipairs(units) do
+        if UnitExists(unit) and UnitIsPlayer(unit) then
+            local s = self:GetScoreForUnit(unit) or 0
+            total = total + s
+            count = count + 1
+        end
+    end
+    if count == 0 then return 0 end
+    return total / count
+end
+
 --- Public: refresh the rank frame with the latest player data.
+--- In a group: shows group average score + rank.  Solo: shows own score + rank.
 function RR:UpdateRankFrame()
     if not rankFrame then return end
 
-    local rank  = self.playerRank  or self:GetRankForScore(0)
-    local score = self.playerScore or 0
-    local c     = rank.color
+    local inGroup = IsInGroup() or IsInRaid()
+    local rank, score, label
+
+    if inGroup then
+        score = self:GetGroupAverageScore()
+        rank  = self:GetRankForScore(score)
+        label = string.format("%.0f Avg M+ Score", score)
+    else
+        rank  = self.playerRank  or self:GetRankForScore(0)
+        score = self.playerScore or 0
+        label = string.format("%.0f M+ Score", score)
+    end
+
+    local c = rank.color
 
     rankFrame.icon:SetTexture(rank.icon)
 
@@ -259,7 +286,7 @@ function RR:UpdateRankFrame()
 
     rankFrame.scoreText:SetText(
         ColorHex(scoreColor[1] or c.r, scoreColor[2] or c.g, scoreColor[3] or c.b)
-        .. string.format("%.0f M+ Score|r", score))
+        .. label .. "|r")
 end
 
 --- Public: show or hide the rank frame.
@@ -783,6 +810,7 @@ function RR:InitUnitWings()
             RR:UpdateUnitWings("focus")
         elseif event == "GROUP_ROSTER_UPDATE" then
             RR:UpdateAllUnitWings()
+            RR:UpdateRankFrame()
             RR:RefreshGroupPanel()
         elseif event == "UNIT_NAME_UPDATE" or event == "UNIT_PORTRAIT_UPDATE" then
             -- unit arg may be a token we track — update just that one
