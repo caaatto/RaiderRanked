@@ -200,7 +200,7 @@ function RR:DebugScore()
     end
 
     print("  Current stored score: " .. tostring(self.playerScore))
-    print("  Current rank: " .. tostring(self.playerRank and self.playerRank.name))
+    print("  Current rank: " .. tostring(self.playerRank and self:GetRankDisplayName(self.playerRank, self.playerScore)))
 end
 
 -- ── Slash commands ───────────────────────────────────────────────────────────

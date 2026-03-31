@@ -104,7 +104,7 @@ function RR:UpdateRankFrame()
     rankFrame.icon:SetTexture(rank.icon)
 
     rankFrame.nameText:SetText(
-        ColorHex(c.r, c.g, c.b) .. rank.name .. "|r")
+        ColorHex(c.r, c.g, c.b) .. self:GetRankDisplayName(rank, score) .. "|r")
 
     local scoreColor = RaiderIO and RaiderIO.GetScoreColor and
         { RaiderIO.GetScoreColor(score) } or { c.r, c.g, c.b }
@@ -149,7 +149,7 @@ function RR:HookTooltip()
             tooltip:AddLine(" ")
             tooltip:AddDoubleLine(
                 "|cff00ccffRaiderRanked|r",
-                ColorHex(c.r, c.g, c.b) .. rank.name .. "|r",
+                ColorHex(c.r, c.g, c.b) .. RR:GetRankDisplayName(rank, score) .. "|r",
                 1, 1, 1, c.r, c.g, c.b)
 
             local scoreColor = RaiderIO and RaiderIO.GetScoreColor and
@@ -176,7 +176,7 @@ function RR:HookTooltip()
                 local c    = rank.color
                 tooltip:AddLine(" ")
                 tooltip:AddDoubleLine("|cff00ccffRaiderRanked|r",
-                    ColorHex(c.r, c.g, c.b) .. rank.name .. "|r", 1,1,1, c.r,c.g,c.b)
+                    ColorHex(c.r, c.g, c.b) .. RR:GetRankDisplayName(rank, score) .. "|r", 1,1,1, c.r,c.g,c.b)
                 tooltip:Show()
             end)
         end)
@@ -249,7 +249,7 @@ function RR:CreateMinimapButton()
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:AddLine("RaiderRanked", 0, 0.8, 1)
         if RR.playerRank then
-            GameTooltip:AddDoubleLine("Rank", RR:FormatRankName(RR.playerRank), 0.7,0.7,0.7, 1,1,1)
+            GameTooltip:AddDoubleLine("Rank", RR:FormatRankName(RR.playerRank, RR.playerScore), 0.7,0.7,0.7, 1,1,1)
             GameTooltip:AddDoubleLine("M+ Score", string.format("%.0f", RR.playerScore or 0), 0.7,0.7,0.7, 1,1,1)
         end
         GameTooltip:AddLine("Left-click to toggle frame", 0.5, 0.5, 0.5)

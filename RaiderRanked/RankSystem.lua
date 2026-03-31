@@ -208,16 +208,32 @@ function RR:GetRankForScore(score)
     return self.RANKS[#self.RANKS] -- fallback: Unranked
 end
 
+--- Returns the display name for a rank, appending " +" when the score is in
+--- the upper half of the bracket (at or above wingScore).
+--- Challenger is excluded (top rank — always "Challenger").
+---@param rank table
+---@param score number|nil
+---@return string
+function RR:GetRankDisplayName(rank, score)
+    if rank.wingScore and score and score >= rank.wingScore
+       and rank.id ~= "CHALLENGER" then
+        return rank.name .. " +"
+    end
+    return rank.name
+end
+
 --- Returns a colour-formatted rank name string.
 ---@param rank table
+---@param score number|nil  Optional score for "+" suffix.
 ---@return string
-function RR:FormatRankName(rank)
+function RR:FormatRankName(rank, score)
     local c = rank.color
+    local name = self:GetRankDisplayName(rank, score)
     return string.format("|cff%02x%02x%02x%s|r",
         math.floor(c.r * 255),
         math.floor(c.g * 255),
         math.floor(c.b * 255),
-        rank.name)
+        name)
 end
 
 --- Returns the default score thresholds as a copy (used for DB initialisation and /rr reset).

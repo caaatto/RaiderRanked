@@ -305,7 +305,7 @@ function RR:PlayRankUpAnimation(fromRank, toRank, newScore)
 
     f.label:SetText("RANK UP!")
     f.label:SetTextColor(ct.r, ct.g, ct.b)
-    f.subLabel:SetText(toRank.name)
+    f.subLabel:SetText(RR:GetRankDisplayName(toRank, newScore))
     f.subLabel:SetTextColor(ct.r, ct.g, ct.b)
     f.scoreLabel:SetText(string.format("%.0f M+ Rating", newScore or 0))
 
