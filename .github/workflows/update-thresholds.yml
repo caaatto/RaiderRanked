@@ -42,19 +42,20 @@ jobs:
 
       - name: Commit updated thresholds
         if: steps.diff.outputs.changed == 'true'
+        id: commit
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
+          git config user.name "Catto"
+          git config user.email "info@catto.at"
           git add RaiderRanked/RankSystem.lua
-          git commit -m "update thresholds $(date -u +%Y-%m-%d)"
+          git commit -m "update thresholds $(date -u +'%Y-%m-%d')"
+          echo "hash=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "msg=$(git log -1 --format=%s)" >> "$GITHUB_OUTPUT"
           git push
 
       - name: Package addon
         if: steps.diff.outputs.changed == 'true'
         run: |
-          VERSION=$(date -u +%Y.%m.%d)
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          zip -r "RaiderRanked-${VERSION}.zip" RaiderRanked/ \
+          zip -r RaiderRanked.zip RaiderRanked/ \
             -x "RaiderRanked/Tools/*" "RaiderRanked/Debug/*" "RaiderRanked/tests/*"
 
       - name: Upload to CurseForge
@@ -62,14 +63,22 @@ jobs:
         env:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
+          CHANGELOG=$(cat <<EOF
+          Threshold Update
+          Author: Catto <info@catto.at>
+          Date: $(date -u +'%A, %B %d, %Y, %H:%M UTC')
+          commit ${{ steps.commit.outputs.hash }}
+          ${{ steps.commit.outputs.msg }}
+          EOF
+          )
+
           METADATA=$(jq -cn \
-            --arg cl "Threshold update ${VERSION}" \
-            --arg dn "RaiderRanked ${VERSION}" \
+            --arg cl "$CHANGELOG" \
             --argjson gv "[${{ vars.CF_GAME_VERSIONS }}]" \
-            '{changelog: $cl, changelogType: "text", displayName: $dn, gameVersions: $gv, releaseType: "release"}')
+            '{changelog: $cl, changelogType: "text", displayName: "Raider Ranked", gameVersions: $gv, releaseType: "release"}')
 
           curl -f -X POST \
             "https://wow.curseforge.com/api/projects/${{ vars.CF_PROJECT_ID }}/upload-file" \
             -H "X-Api-Token: $CF_API_TOKEN" \
             -F "metadata=$METADATA" \
-            -F "file=@RaiderRanked-${VERSION}.zip"
+            -F "file=@RaiderRanked.zip"
