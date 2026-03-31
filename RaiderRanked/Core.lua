@@ -16,6 +16,13 @@ RR.DB_DEFAULTS = {
     minimap       = { hide = false, minimapPos = 225 },  -- LibDBIcon settings
     framePosition = { point = "CENTER", x = 0, y = -200 },
     lastRankId    = nil,  -- persisted so rank-ups are detected across sessions
+    -- PvP
+    pvpThresholds     = nil,
+    showPvPFrame      = false,  -- opt-in via Settings
+    showPvPInTooltip  = false,  -- opt-in via Settings
+    showPvPAura       = false,  -- opt-in via Settings
+    pvpFramePosition  = { point = "CENTER", x = 0, y = -300 },
+    lastPvPRankId     = nil,
 }
 
 -- ── Addon frame / event registration ────────────────────────────────────────
@@ -94,8 +101,14 @@ function RR:OnAddonLoaded()
         print("|cff00ccffRaiderRanked|r Thresholds updated to new defaults.")
     end
 
+    -- PvP thresholds.
+    if not RaiderRankedDB.pvpThresholds then
+        RaiderRankedDB.pvpThresholds = self:GetDefaultPvPThresholds()
+    end
+
     self.db = RaiderRankedDB
     self:ApplyThresholds(self.db.thresholds)
+    self:ApplyPvPThresholds(self.db.pvpThresholds)
     self:RegisterSlashCommands()
 
     -- Settings panel must be registered during ADDON_LOADED (before UI is built).
@@ -238,6 +251,28 @@ function RR:DebugScore()
     print("  Current rank: " .. tostring(self.playerRank and self:GetRankDisplayName(self.playerRank, self.playerScore)))
 end
 
+-- ── PvP debug ────────────────────────────────────────────────────────────────
+
+function RR:DebugPvPScore()
+    local p = "|cff00ccffRaiderRanked PvP Debug|r"
+    print(p)
+
+    local brackets, maxCR = self:GetOwnPvPScores()
+    for _, b in ipairs(self.PVP_BRACKETS) do
+        print(string.format("  %s: %d", b.name, brackets[b.name] or 0))
+    end
+    print(string.format("  %s: %d", self.PVP_RBG_NAME, brackets[self.PVP_RBG_NAME] or 0))
+    print(string.format("  Max CR: %d", maxCR))
+
+    local rank = self:GetPvPRankForCR(maxCR)
+    print("  PvP Rank: " .. self:FormatPvPRankName(rank))
+
+    -- Cache stats.
+    local cacheCount = 0
+    for _ in pairs(self.pvpCache) do cacheCount = cacheCount + 1 end
+    print(string.format("  Cache entries: %d", cacheCount))
+end
+
 -- ── Slash commands ───────────────────────────────────────────────────────────
 
 function RR:RegisterSlashCommands()
@@ -313,11 +348,33 @@ function RR:HandleSlashCommand(msg)
         print("|cff00ccffRaiderRanked|r Thresholds reset to defaults.")
 
     elseif msg == "ranks" then
-        print("|cff00ccffRaiderRanked|r Current thresholds:")
+        print("|cff00ccffRaiderRanked|r Current M+ thresholds:")
         for _, rank in ipairs(self.RANKS) do
             print(string.format("  %s  %s: %d+",
                 self:FormatRankName(rank), rank.id, rank.minScore))
         end
+
+    elseif msg == "pvp" then
+        self:TogglePvPRankFrame()
+
+    elseif msg == "pvpranks" then
+        print("|cff00ccffRaiderRanked|r Current PvP thresholds:")
+        for _, rank in ipairs(self.PVP_RANKS) do
+            print(string.format("  %s  %s: %d+",
+                self:FormatPvPRankName(rank), rank.id, rank.minCR))
+        end
+
+    elseif msg == "pvpdebug" then
+        self:DebugPvPScore()
+
+    elseif msg:match("^pvpaura%s+test%s+%S+$") then
+        self:TestPvPAura(msg:match("^pvpaura%s+test%s+(%S+)$"))
+
+    elseif msg == "pvpaura stop" then
+        self:StopPvPAuraTest()
+
+    elseif msg:match("^pvpaura%s+%d+$") then
+        self:SetPvPAuraSize(msg:match("^pvpaura%s+(%d+)$"))
 
     else
         print("|cff00ccffRaiderRanked|r Commands:")
@@ -330,6 +387,12 @@ function RR:HandleSlashCommand(msg)
         print("  /rr wings <size>   – resize portrait wings (default 160)")
         print("  /rr wingsdbg       – debug wings anchor/visibility")
         print("  /rr debug       – dump raw score API output")
+        print("  /rr pvp             – toggle PvP rank frame")
+        print("  /rr pvpranks    – list PvP rank thresholds")
+        print("  /rr pvpdebug    – dump PvP rating per bracket")
+        print("  /rr pvpaura test <rank> – preview aura (e.g. gladiator)")
+        print("  /rr pvpaura stop       – stop aura preview")
+        print("  /rr pvpaura <size>     – resize PvP portrait aura (40–400)")
         print("  /rr test        – run all in-game tests")
     end
 end

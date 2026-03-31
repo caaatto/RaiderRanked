@@ -234,9 +234,14 @@ function RR:InitUI()
         rankFrame:Hide()
     end
     self:UpdateRankFrame()
+    if self.db.showPvPFrame then
+        pvpRankFrame = CreatePvPRankFrame()
+        self:UpdatePvPRankFrame()
+    end
     self:HookTooltip()
     self:CreateMinimapButton()
     self:CreatePortraitWings()
+    self:CreatePvPAura()
     self:InitUnitWings()
 end
 
@@ -302,6 +307,112 @@ function RR:ToggleRankFrame(show)
     end
 end
 
+-- ── PvP Rank Frame ──────────────────────────────────────────────────────────
+
+local pvpRankFrame
+
+local function CreatePvPRankFrame()
+    local f = CreateFrame("Frame", "RaiderRankedPvPFrame", UIParent, "BackdropTemplate")
+    f:SetSize(FRAME_W, FRAME_H)
+    f:SetFrameStrata("MEDIUM")
+    f:SetBackdrop({
+        bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    f:SetBackdropColor(0, 0, 0, 0.85)
+
+    local pos = RR.db.pvpFramePosition
+    f:SetPoint(pos.point, UIParent, pos.point, pos.x, pos.y)
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    f:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local point, _, _, x, y = self:GetPoint()
+        RR.db.pvpFramePosition = { point = point, x = x, y = y }
+    end)
+
+    local icon = f:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(ICON_SIZE, ICON_SIZE)
+    icon:SetPoint("LEFT", f, "LEFT", 12, 0)
+    f.icon = icon
+
+    local nameText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    nameText:SetPoint("BOTTOMLEFT", icon, "RIGHT", 10, 2)
+    nameText:SetPoint("RIGHT", f, "RIGHT", -10, 0)
+    nameText:SetJustifyH("LEFT")
+    f.nameText = nameText
+
+    local scoreText = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    scoreText:SetPoint("TOPLEFT", icon, "RIGHT", 10, -2)
+    scoreText:SetJustifyH("LEFT")
+    f.scoreText = scoreText
+
+    f:SetScript("OnMouseUp", function(self, button)
+        if button == "RightButton" then
+            self:Hide()
+            RR.db.showPvPFrame = false
+        end
+    end)
+
+    f:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine("RaiderRanked — PvP", 1, 0.3, 0.3)
+        local brackets = RR:GetPvPBracketsForUnit("player")
+        if brackets then
+            for _, b in ipairs(RR.PVP_BRACKETS) do
+                local cr = brackets[b.name] or 0
+                if cr > 0 then
+                    GameTooltip:AddDoubleLine(b.name, tostring(cr), 0.7,0.7,0.7, 1,1,1)
+                end
+            end
+            local rbgCR = brackets[RR.PVP_RBG_NAME] or 0
+            if rbgCR > 0 then
+                GameTooltip:AddDoubleLine(RR.PVP_RBG_NAME, tostring(rbgCR), 0.7,0.7,0.7, 1,1,1)
+            end
+        end
+        GameTooltip:AddLine("Left-drag to move", 0.7, 0.7, 0.7)
+        GameTooltip:AddLine("Right-click to hide", 0.7, 0.7, 0.7)
+        GameTooltip:Show()
+    end)
+    f:SetScript("OnLeave", GameTooltip_Hide)
+
+    return f
+end
+
+function RR:UpdatePvPRankFrame()
+    if not pvpRankFrame then return end
+
+    local rank  = self.playerPvPRank  or self:GetPvPRankForCR(0)
+    local score = self.playerPvPScore or 0
+    local c = rank.color
+
+    pvpRankFrame.icon:SetTexture(rank.icon)
+    pvpRankFrame.nameText:SetText(
+        ColorHex(c.r, c.g, c.b) .. rank.name .. "|r")
+    pvpRankFrame.scoreText:SetText(
+        ColorHex(c.r, c.g, c.b) .. string.format("%.0f PvP Rating", score) .. "|r")
+end
+
+function RR:TogglePvPRankFrame(show)
+    if not pvpRankFrame then
+        pvpRankFrame = CreatePvPRankFrame()
+        self:UpdatePvPRankFrame()
+    end
+    if show == nil then show = not pvpRankFrame:IsShown() end
+    if show then
+        pvpRankFrame:Show()
+        self.db.showPvPFrame = true
+        self:RefreshPlayerPvPRank()
+    else
+        pvpRankFrame:Hide()
+        self.db.showPvPFrame = false
+    end
+end
+
 -- ── Tooltip Hook ─────────────────────────────────────────────────────────────
 
 function RR:HookTooltip()
@@ -309,31 +420,51 @@ function RR:HookTooltip()
     -- TooltipDataProcessor is available since Dragonflight and works in Midnight.
     if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
         TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip)
-            if not RR.db.showInTooltip then return end
-
             local _, unit = tooltip:GetUnit()
             if not unit or not UnitIsPlayer(unit) then return end
 
-            local score = RR:GetScoreForUnit(unit)
-            if not score then return end
+            -- M+ section.
+            if RR.db.showInTooltip then
+                local score = RR:GetScoreForUnit(unit)
+                if score then
+                    local rank = RR:GetRankForScore(score)
+                    local c    = rank.color
 
-            local rank = RR:GetRankForScore(score)
-            local c    = rank.color
+                    tooltip:AddLine(" ")
+                    tooltip:AddDoubleLine(
+                        "|cff00ccffRaiderRanked|r",
+                        ColorHex(c.r, c.g, c.b) .. RR:GetRankDisplayName(rank, score) .. "|r",
+                        1, 1, 1, c.r, c.g, c.b)
 
-            tooltip:AddLine(" ")
-            tooltip:AddDoubleLine(
-                "|cff00ccffRaiderRanked|r",
-                ColorHex(c.r, c.g, c.b) .. RR:GetRankDisplayName(rank, score) .. "|r",
-                1, 1, 1, c.r, c.g, c.b)
+                    local scoreColor = RaiderIO and RaiderIO.GetScoreColor and
+                        { RaiderIO.GetScoreColor(score) } or { c.r, c.g, c.b }
 
-            local scoreColor = RaiderIO and RaiderIO.GetScoreColor and
-                { RaiderIO.GetScoreColor(score) } or { c.r, c.g, c.b }
+                    tooltip:AddDoubleLine(
+                        "M+ Score",
+                        ColorHex(scoreColor[1] or c.r, scoreColor[2] or c.g, scoreColor[3] or c.b)
+                            .. string.format("%.0f|r", score),
+                        0.7, 0.7, 0.7, 1, 1, 1)
+                end
+            end
 
-            tooltip:AddDoubleLine(
-                "M+ Score",
-                ColorHex(scoreColor[1] or c.r, scoreColor[2] or c.g, scoreColor[3] or c.b)
-                    .. string.format("%.0f|r", score),
-                0.7, 0.7, 0.7, 1, 1, 1)
+            -- PvP section.
+            if RR.db.showPvPInTooltip then
+                local pvpCR = RR:GetPvPScoreForUnit(unit)
+                if pvpCR then
+                    local pvpRank = RR:GetPvPRankForCR(pvpCR)
+                    local pc = pvpRank.color
+
+                    tooltip:AddDoubleLine(
+                        "|cffff4444PvP Rank|r",
+                        ColorHex(pc.r, pc.g, pc.b) .. pvpRank.name .. "|r",
+                        1, 1, 1, pc.r, pc.g, pc.b)
+
+                    tooltip:AddDoubleLine(
+                        "PvP Rating",
+                        ColorHex(pc.r, pc.g, pc.b) .. string.format("%.0f|r", pvpCR),
+                        0.7, 0.7, 0.7, 1, 1, 1)
+                end
+            end
 
             tooltip:Show()
         end)
@@ -834,6 +965,24 @@ function RR:RegisterSettings()
         "Add rank and M+ score to unit tooltips.",
         function() return self.db.showInTooltip ~= false end,
         function(val) self.db.showInTooltip = val end)
+
+    AddCheckbox("showPvPFrame",
+        "Show PvP rank frame",
+        "Show a second HUD frame with your PvP rank and rating.",
+        function() return self.db.showPvPFrame end,
+        function(val) self:TogglePvPRankFrame(val) end)
+
+    AddCheckbox("showPvPInTooltip",
+        "Show PvP rank in tooltips",
+        "Add PvP rank and rating to unit tooltips.",
+        function() return self.db.showPvPInTooltip end,
+        function(val) self.db.showPvPInTooltip = val end)
+
+    AddCheckbox("showPvPAura",
+        "Show PvP aura on player portrait",
+        "Overlay an animated electric aura on your portrait based on PvP rating.",
+        function() return self.db.showPvPAura end,
+        function(val) self.db.showPvPAura = val; if val then self:UpdatePvPAura() else self:StopPvPAura() end end)
 
     AddCheckbox("showWings",
         "Show wings on player portrait",
