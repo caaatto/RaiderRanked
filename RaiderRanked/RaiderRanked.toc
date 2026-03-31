@@ -8,6 +8,11 @@
 ## OptionalDeps: RaiderIO
 ## X-ScoreSource: Blizzard C_PlayerInfo API (RaiderIO as fallback)
 
+Libs\LibStub.lua
+Libs\CallbackHandler-1.0.lua
+Libs\LibDataBroker-1.1.lua
+Libs\LibDBIcon-1.0.lua
+
 RankSystem.lua
 Core.lua
 UI.lua

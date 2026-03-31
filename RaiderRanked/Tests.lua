@@ -181,8 +181,9 @@ local function runUITests()
     s:assert("RankFrame has nameText", RaiderRankedFrame.nameText ~= nil)
     s:assert("RankFrame has scoreText", RaiderRankedFrame.scoreText ~= nil)
 
-    -- Minimap button
-    s:assert("MinimapButton exists", RR.minimapButton ~= nil)
+    -- Minimap button (LibDBIcon — may be nil if db.minimap.hide was true at load)
+    local icon = LibStub and LibStub("LibDBIcon-1.0", true)
+    s:assert("MinimapButton registered", icon and icon:IsRegistered("RaiderRanked"))
 
     -- ToggleRankFrame: round-trip show/hide
     local wasShown = RaiderRankedFrame:IsShown()

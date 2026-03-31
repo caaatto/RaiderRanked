@@ -12,6 +12,8 @@ RR.DB_DEFAULTS = {
     showFrame     = true,
     showWings     = true,
     showUnitWings = true,
+    showMinimap   = true,
+    minimap       = { hide = false, minimapPos = 225 },  -- LibDBIcon settings
     framePosition = { point = "CENTER", x = 0, y = -200 },
     lastRankId    = nil,  -- persisted so rank-ups are detected across sessions
 }
@@ -54,6 +56,19 @@ function RR:OnAddonLoaded()
         if RaiderRankedDB[k] == nil then
             RaiderRankedDB[k] = v
         end
+    end
+    -- Ensure minimap sub-table has all required keys.
+    if type(RaiderRankedDB.minimap) ~= "table" then
+        RaiderRankedDB.minimap = CopyTable(RR.DB_DEFAULTS.minimap)
+    end
+    -- Migrate old minimapAngle → LibDBIcon minimapPos (radians → degrees).
+    if RaiderRankedDB.minimapAngle then
+        RaiderRankedDB.minimap.minimapPos = math.deg(RaiderRankedDB.minimapAngle) % 360
+        RaiderRankedDB.minimapAngle = nil
+    end
+    -- Migrate old showMinimap → LibDBIcon hide flag.
+    if RaiderRankedDB.showMinimap == false then
+        RaiderRankedDB.minimap.hide = true
     end
     if not RaiderRankedDB.thresholds then
         RaiderRankedDB.thresholds = self:GetDefaultThresholds()

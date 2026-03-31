@@ -357,93 +357,61 @@ function RR:HookTooltip()
     end
 end
 
--- ── Minimap Button ───────────────────────────────────────────────────────────
+-- ── Minimap Button (LibDBIcon) ──────────────────────────────────────────────
 
 function RR:CreateMinimapButton()
-    local button = CreateFrame("Button", "RaiderRankedMinimapButton", Minimap)
-    button:SetSize(32, 32)
-    button:SetFrameStrata("MEDIUM")
-    button:SetFrameLevel(8)
-    -- Store immediately so tests and other code can find it even if later setup errors.
-    self.minimapButton = button
-
-    -- Round clip (optional – silently skip if API unavailable).
-    pcall(function()
-        local mask = button:CreateMaskTexture()
-        mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-        mask:SetAllPoints()
-    end)
-
-    -- Icon texture (uses current player rank icon).
-    local tex = button:CreateTexture(nil, "BACKGROUND")
-    tex:SetAllPoints()
-    button.tex = tex
-
-    -- Border.
-    local border = button:CreateTexture(nil, "OVERLAY")
-    border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
-    border:SetSize(56, 56)
-    border:SetPoint("TOPLEFT")
-    button.border = border
-
-    -- Dragging around the minimap.
-    local isDragging = false
-    local function UpdatePosition(btn)
-        local mx, my  = Minimap:GetCenter()
-        local cx, cy  = GetCursorPosition()
-        local scale   = UIParent:GetEffectiveScale()
-        cx, cy        = cx / scale, cy / scale
-        local angle   = math.atan2(cy - my, cx - mx)
-        local radius  = (Minimap:GetWidth() / 2) + 5
-        btn:SetPoint("CENTER", Minimap, "CENTER",
-            math.cos(angle) * radius,
-            math.sin(angle) * radius)
-        RaiderRankedDB.minimapAngle = angle
+    local ldb  = LibStub("LibDataBroker-1.1", true)
+    local icon = LibStub("LibDBIcon-1.0", true)
+    if not ldb or not icon then
+        print("|cffff0000RaiderRanked|r LibDBIcon or LibDataBroker not found — minimap button disabled.")
+        return
     end
 
-    button:RegisterForDrag("LeftButton")
-    button:SetScript("OnDragStart", function(self)
-        isDragging = true
-        self:SetScript("OnUpdate", function() UpdatePosition(self) end)
-    end)
-    button:SetScript("OnDragStop", function(self)
-        isDragging = false
-        self:SetScript("OnUpdate", nil)
-    end)
+    local rank = self.playerRank or self:GetRankForScore(0)
 
-    -- Click: toggle rank frame.
-    button:SetScript("OnClick", function(self, btn)
-        if isDragging then return end
-        if btn == "LeftButton" then
-            RR:ToggleRankFrame()
-        end
-    end)
+    local dataObj = ldb:NewDataObject("RaiderRanked", {
+        type = "launcher",
+        icon = rank.icon or "Interface\\Icons\\inv_12_trinket_raid_dreamrift_gazeofthealnseer",
+        OnClick = function(_, button)
+            if button == "LeftButton" then
+                RR:ToggleRankFrame()
+            end
+        end,
+        OnTooltipShow = function(tooltip)
+            tooltip:AddLine("RaiderRanked", 0, 0.8, 1)
+            if RR.playerRank then
+                tooltip:AddDoubleLine("Rank", RR:FormatRankName(RR.playerRank, RR.playerScore), 0.7,0.7,0.7, 1,1,1)
+                tooltip:AddDoubleLine("M+ Score", string.format("%.0f", RR.playerScore or 0), 0.7,0.7,0.7, 1,1,1)
+            end
+            tooltip:AddLine("Left-click to toggle frame", 0.5, 0.5, 0.5)
+        end,
+    })
 
-    button:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:AddLine("RaiderRanked", 0, 0.8, 1)
-        if RR.playerRank then
-            GameTooltip:AddDoubleLine("Rank", RR:FormatRankName(RR.playerRank, RR.playerScore), 0.7,0.7,0.7, 1,1,1)
-            GameTooltip:AddDoubleLine("M+ Score", string.format("%.0f", RR.playerScore or 0), 0.7,0.7,0.7, 1,1,1)
-        end
-        GameTooltip:AddLine("Left-click to toggle frame", 0.5, 0.5, 0.5)
-        GameTooltip:Show()
-    end)
-    button:SetScript("OnLeave", GameTooltip_Hide)
+    self.minimapDataObj = dataObj
 
-    -- Initial position.
-    local angle = (RaiderRankedDB and RaiderRankedDB.minimapAngle) or math.rad(225)
-    local radius = (Minimap:GetWidth() / 2) + 5
-    button:SetPoint("CENTER", Minimap, "CENTER",
-        math.cos(angle) * radius,
-        math.sin(angle) * radius)
+    icon:Register("RaiderRanked", dataObj, self.db.minimap)
+
+    -- Expose the button frame for tests.
+    self.minimapButton = icon:GetMinimapButton("RaiderRanked")
 
     -- Update the minimap icon texture whenever the rank refreshes.
     local origUpdate = RR.UpdateRankFrame
     RR.UpdateRankFrame = function(self)
         origUpdate(self)
-        local rank = self.playerRank or self:GetRankForScore(0)
-        button.tex:SetTexture(rank.icon)
+        local r = self.playerRank or self:GetRankForScore(0)
+        dataObj.icon = r.icon or "Interface\\Icons\\inv_12_trinket_raid_dreamrift_gazeofthealnseer"
+    end
+end
+
+function RR:ToggleMinimapButton(show)
+    local icon = LibStub("LibDBIcon-1.0", true)
+    if not icon then return end
+    if show then
+        self.db.minimap.hide = false
+        icon:Show("RaiderRanked")
+    else
+        self.db.minimap.hide = true
+        icon:Hide("RaiderRanked")
     end
 end
 
@@ -878,6 +846,12 @@ function RR:RegisterSettings()
         "Overlay rank wings on target, focus, and party portraits.",
         function() return self.db.showUnitWings ~= false end,
         function(val) self.db.showUnitWings = val; self:UpdateAllUnitWings() end)
+
+    AddCheckbox("showMinimap",
+        "Show minimap button",
+        "Show the RaiderRanked button on the minimap.",
+        function() return not self.db.minimap.hide end,
+        function(val) self:ToggleMinimapButton(val) end)
 
     Settings.RegisterAddOnCategory(category)
     self.settingsCategory = category
