@@ -541,8 +541,8 @@ end
 local function ApplyWingsColor(tex, rank, gradientFlip)
     tex:SetDesaturation(1)
     if rank.id == "CHALLENGER" then
-        local gold    = CreateColor(1.0, 0.82, 0.0,  1)
-        local iceblue = CreateColor(0.4, 0.85, 1.0,  1)
+        local gold    = CreateColor(1.0, 0.75, 0.0,  1)
+        local iceblue = CreateColor(0.0, 0.75, 1.0,  1)
         -- HORIZONTAL gradient goes left→right in texture space.
         -- Flipped texture: swap colours so the visual direction stays gold→iceblue.
         if gradientFlip then
