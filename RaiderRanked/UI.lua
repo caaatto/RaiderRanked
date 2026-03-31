@@ -54,16 +54,15 @@ local function CreateRankFrame()
     icon:SetPoint("LEFT", f, "LEFT", 12, 0)
     f.icon = icon
 
-    -- Rank name.
+    -- Rank name + score — vertically centered as a block relative to the icon.
     local nameText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    nameText:SetPoint("TOPLEFT", icon, "TOPRIGHT", 10, -8)
+    nameText:SetPoint("BOTTOMLEFT", icon, "RIGHT", 10, 2)
     nameText:SetPoint("RIGHT", f, "RIGHT", -10, 0)
     nameText:SetJustifyH("LEFT")
     f.nameText = nameText
 
-    -- Score.
     local scoreText = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    scoreText:SetPoint("TOPLEFT", nameText, "BOTTOMLEFT", 0, -4)
+    scoreText:SetPoint("TOPLEFT", icon, "RIGHT", 10, -2)
     scoreText:SetJustifyH("LEFT")
     f.scoreText = scoreText
 
