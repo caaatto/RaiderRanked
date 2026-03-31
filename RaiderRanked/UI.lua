@@ -5,6 +5,9 @@ local ADDON_NAME, RR = ...
 
 local FRAME_W, FRAME_H = 220, 90
 local ICON_SIZE         = 64
+local GROUP_ROW_H       = 32   -- height per group member row
+local GROUP_ICON_SIZE   = 28   -- emblem icon in group rows
+local GROUP_PAD         = 6    -- vertical padding inside group panel
 
 -- ── Helper ───────────────────────────────────────────────────────────────────
 
@@ -34,7 +37,11 @@ local function CreateRankFrame()
     f:SetMovable(true)
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
+    local didDrag = false
+    f:SetScript("OnDragStart", function(self)
+        didDrag = true
+        self:StartMoving()
+    end)
     f:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
         local point, _, _, x, y = self:GetPoint()
@@ -60,24 +67,165 @@ local function CreateRankFrame()
     scoreText:SetJustifyH("LEFT")
     f.scoreText = scoreText
 
-    -- Close button (right-click to hide).
+    -- Left-click toggles group panel; right-click hides frame.
+    f:SetScript("OnMouseDown", function() didDrag = false end)
     f:SetScript("OnMouseUp", function(self, button)
         if button == "RightButton" then
             self:Hide()
             RR.db.showFrame = false
+        elseif button == "LeftButton" and not didDrag then
+            RR:ToggleGroupPanel()
         end
     end)
 
     f:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:AddLine("RaiderRanked", 0, 0.8, 1)
-        GameTooltip:AddLine("Left-drag to move", 1, 1, 1)
+        GameTooltip:AddLine("Left-click to show group ranks", 1, 1, 1)
+        GameTooltip:AddLine("Left-drag to move", 0.7, 0.7, 0.7)
         GameTooltip:AddLine("Right-click to hide  (/rr to show)", 0.7, 0.7, 0.7)
         GameTooltip:Show()
     end)
     f:SetScript("OnLeave", GameTooltip_Hide)
 
     return f
+end
+
+-- ── Group Panel ─────────────────────────────────────────────────────────────
+-- Expandable panel below the rank frame showing party/raid member ranks.
+
+local groupPanel
+local groupRows = {}  -- reusable row frames
+
+local function CreateGroupRow(parent, index)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetHeight(GROUP_ROW_H)
+    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, -(GROUP_PAD + (index - 1) * GROUP_ROW_H))
+    row:SetPoint("RIGHT", parent, "RIGHT", -8, 0)
+
+    local icon = row:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(GROUP_ICON_SIZE, GROUP_ICON_SIZE)
+    icon:SetPoint("LEFT", row, "LEFT", 0, 0)
+    row.icon = icon
+
+    local nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    nameText:SetPoint("LEFT", icon, "RIGHT", 6, 0)
+    nameText:SetWidth(80)
+    nameText:SetJustifyH("LEFT")
+    nameText:SetWordWrap(false)
+    row.nameText = nameText
+
+    local rankText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    rankText:SetPoint("LEFT", nameText, "RIGHT", 4, 0)
+    rankText:SetWidth(70)
+    rankText:SetJustifyH("LEFT")
+    rankText:SetWordWrap(false)
+    row.rankText = rankText
+
+    local scoreText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    scoreText:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+    scoreText:SetJustifyH("RIGHT")
+    row.scoreText = scoreText
+
+    return row
+end
+
+local function CreateGroupPanel()
+    local p = CreateFrame("Frame", "RaiderRankedGroupPanel", rankFrame, "BackdropTemplate")
+    p:SetPoint("TOPLEFT", rankFrame, "BOTTOMLEFT", 0, 2)
+    p:SetWidth(FRAME_W)
+    p:SetFrameStrata("MEDIUM")
+    p:SetBackdrop({
+        bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    p:SetBackdropColor(0, 0, 0, 0.85)
+    p:EnableMouse(true)  -- prevent click-through
+    p:Hide()
+    return p
+end
+
+--- Collects group unit tokens (player + party1–4 or raid1–40).
+local function GetGroupUnits()
+    local units = {}
+    if IsInRaid() then
+        for i = 1, GetNumGroupMembers() do
+            table.insert(units, "raid" .. i)
+        end
+    elseif IsInGroup() then
+        table.insert(units, "player")
+        for i = 1, GetNumGroupMembers() - 1 do
+            table.insert(units, "party" .. i)
+        end
+    else
+        table.insert(units, "player")
+    end
+    return units
+end
+
+function RR:RefreshGroupPanel()
+    if not groupPanel or not groupPanel:IsShown() then return end
+
+    local units = GetGroupUnits()
+
+    -- Collect and sort by score descending.
+    local members = {}
+    for _, unit in ipairs(units) do
+        if UnitExists(unit) and UnitIsPlayer(unit) then
+            local name = UnitName(unit) or UNKNOWN
+            local score = self:GetScoreForUnit(unit) or 0
+            local rank = self:GetRankForScore(score)
+            table.insert(members, { name = name, score = score, rank = rank, unit = unit })
+        end
+    end
+    table.sort(members, function(a, b) return a.score > b.score end)
+
+    -- Ensure enough rows exist.
+    for i = #groupRows + 1, #members do
+        groupRows[i] = CreateGroupRow(groupPanel, i)
+    end
+
+    -- Populate rows.
+    for i, m in ipairs(members) do
+        local row = groupRows[i]
+        local c = m.rank.color
+
+        row.icon:SetTexture(m.rank.icon)
+        row.nameText:SetText(m.name)
+        row.nameText:SetTextColor(1, 1, 1)
+        row.rankText:SetText(self:GetRankDisplayName(m.rank, m.score))
+        row.rankText:SetTextColor(c.r, c.g, c.b)
+
+        local sc = (RaiderIO and RaiderIO.GetScoreColor)
+            and { RaiderIO.GetScoreColor(m.score) } or { c.r, c.g, c.b }
+        row.scoreText:SetText(string.format("%.0f", m.score))
+        row.scoreText:SetTextColor(sc[1] or c.r, sc[2] or c.g, sc[3] or c.b)
+
+        row:Show()
+    end
+
+    -- Hide excess rows.
+    for i = #members + 1, #groupRows do
+        groupRows[i]:Hide()
+    end
+
+    -- Resize panel to fit content.
+    local count = math.max(#members, 1)
+    groupPanel:SetHeight(GROUP_PAD * 2 + count * GROUP_ROW_H)
+end
+
+function RR:ToggleGroupPanel()
+    if not groupPanel then
+        groupPanel = CreateGroupPanel()
+    end
+    if groupPanel:IsShown() then
+        groupPanel:Hide()
+    else
+        groupPanel:Show()
+        self:RefreshGroupPanel()
+    end
 end
 
 --- Public: initialise UI elements. Called from Core.OnPlayerLogin.
@@ -635,6 +783,7 @@ function RR:InitUnitWings()
             RR:UpdateUnitWings("focus")
         elseif event == "GROUP_ROSTER_UPDATE" then
             RR:UpdateAllUnitWings()
+            RR:RefreshGroupPanel()
         elseif event == "UNIT_NAME_UPDATE" or event == "UNIT_PORTRAIT_UPDATE" then
             -- unit arg may be a token we track — update just that one
             if unit and unitWingData[unit] then
