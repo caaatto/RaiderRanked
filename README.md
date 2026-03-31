@@ -43,7 +43,7 @@ A daily GitHub Actions workflow fetches the M+ score distribution from Raider.IO
 
 ### Setup (for maintainers)
 
-1. Get a [CurseForge API token](https://authors.curseforge.com/account/api-tokens)
+1. Get a [CurseForge API token](https://legacy.curseforge.com/account/api-tokens)
 2. Set these in the repo settings:
    - **Secret** `CF_API_TOKEN` — your CurseForge API token
    - **Variable** `CF_PROJECT_ID` — your CurseForge project ID

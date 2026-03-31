@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """
-Fetch M+ score distribution from Raider.IO and compute
-percentile-based rank thresholds for RaiderRanked.
+Fetch M+ score distribution from Raider.IO season-cutoffs API,
+interpolate percentile-based rank thresholds, and write thresholds.json.
 """
 
 import json
+import math
 import os
-import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
 
-SEASON = os.getenv("RR_SEASON", "season-tww-2")
-REGION = os.getenv("RR_REGION", "world")
+SEASON = os.getenv("RR_SEASON", "season-mn-1")
+REGION = os.getenv("RR_REGION", "eu")
 OUTPUT_DIR = Path(os.getenv("RR_OUTPUT_DIR", "."))
 
 RIO_BASE = "https://raider.io/api/v1"
-REQUEST_DELAY = 0.4
 
+# Bracket definitions: (rank_id, top_pct_start, top_pct_end)
+# e.g. Challenger = top 0% to 0.1% of all players
 BRACKETS = [
     ("CHALLENGER",  0.000, 0.001),
     ("GRANDMASTER", 0.001, 0.003),
@@ -34,84 +34,122 @@ BRACKETS = [
 ]
 
 
-class RioClient:
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers["User-Agent"] = "RaiderRanked-Updater/1.0"
-        self._cache = {}
-        self._page_size = None
+def fetch_cutoffs():
+    """Fetch season-cutoffs from Raider.IO. Returns (total_players, data_points).
 
-    def _get_page(self, page):
-        if page in self._cache:
-            return self._cache[page]
-        time.sleep(REQUEST_DELAY)
-        resp = self.session.get(
-            f"{RIO_BASE}/mythic-plus/rankings/characters",
-            params={"season": SEASON, "region": REGION, "page": page},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        self._cache[page] = data
-        return data
+    data_points is a sorted list of (top_fraction, score) tuples,
+    built from percentile cutoffs + keystone achievement cutoffs.
+    """
+    resp = requests.get(
+        f"{RIO_BASE}/mythic-plus/season-cutoffs",
+        params={"season": SEASON, "region": REGION},
+        headers={"User-Agent": "RaiderRanked-Updater/1.0"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    cutoffs = resp.json()["cutoffs"]
 
-    @staticmethod
-    def _unpack(data):
-        inner = data.get("rankingData", data)
-        total = inner.get("totalCount", inner.get("total", 0))
-        entries = inner.get("rankings", inner.get("characters", []))
-        return total, entries
+    # Extract percentile cutoffs (p999 = quantile 0.999 = top 0.1%)
+    points = []
+    total = 0
+    for key in ("p999", "p990", "p900", "p750", "p600"):
+        entry = cutoffs[key]["all"]
+        total = entry["totalPopulationCount"]
+        top_frac = 1.0 - entry["quantile"]
+        score = entry["quantileMinValue"]
+        points.append((top_frac, score))
 
-    @staticmethod
-    def _extract_score(entry):
-        for key in ("score", "mythicPlusScore", "mythic_plus_score"):
-            val = entry.get(key)
-            if isinstance(val, (int, float)):
-                return int(val)
-        char = entry.get("character", {})
-        for key in ("score", "mythicPlusScore"):
-            val = char.get(key)
-            if isinstance(val, (int, float)):
-                return int(val)
-        return 0
+    # Keystone achievement cutoffs give us data in the lower half
+    for key in ("keystoneLegend", "keystoneHero", "keystoneMaster",
+                "keystoneConqueror", "keystoneExplorer"):
+        if key not in cutoffs:
+            continue
+        entry = cutoffs[key]
+        # These have a flat structure (not nested under "all")
+        if "all" in entry:
+            entry = entry["all"]
+        if "quantilePopulationFraction" not in entry:
+            continue
+        top_frac = entry["quantilePopulationFraction"]
+        score = entry["quantileMinValue"]
+        points.append((top_frac, score))
 
-    def get_total(self):
-        data = self._get_page(0)
-        total, entries = self._unpack(data)
-        self._page_size = len(entries) if entries else 20
-        return total
+    # Sort by top_fraction ascending (highest ranked first)
+    points.sort(key=lambda p: p[0])
 
-    def score_at(self, position):
-        ps = self._page_size or 20
-        page = position // ps
-        offset = position % ps
-        data = self._get_page(page)
-        _, entries = self._unpack(data)
-        if offset >= len(entries):
-            return 0
-        return self._extract_score(entries[offset])
+    # Deduplicate near-overlapping points (e.g. p600 and keystoneHero)
+    filtered = [points[0]]
+    for frac, score in points[1:]:
+        if abs(frac - filtered[-1][0]) > 0.005:
+            filtered.append((frac, score))
+
+    return total, filtered
 
 
-def compute(client):
-    total = client.get_total()
-    if total == 0:
-        print("ERROR: 0 players returned", file=sys.stderr)
-        sys.exit(1)
+def interpolate(top_frac, points):
+    """Piecewise linear interpolation in log10(top_fraction) space.
 
+    For fractions beyond the last data point (bottom of distribution),
+    scores decay linearly to 0 at top_frac=1.0 — this matches observed
+    M+ score distributions much better than log extrapolation.
+    """
+    last_frac, last_score = points[-1]
+
+    # Beyond last data point: linear decay to 0 at 100%
+    if top_frac >= last_frac:
+        remaining = 1.0 - last_frac
+        if remaining <= 0:
+            return last_score
+        return last_score * (1.0 - top_frac) / remaining
+
+    log_points = [(math.log10(f), s) for f, s in points]
+    x = math.log10(max(top_frac, 1e-6))
+
+    # Clamp above highest known point
+    if x <= log_points[0][0]:
+        return log_points[0][1]
+
+    # Interpolate between surrounding points
+    for i in range(len(log_points) - 1):
+        x0, y0 = log_points[i]
+        x1, y1 = log_points[i + 1]
+        if x0 <= x <= x1:
+            t = (x - x0) / (x1 - x0)
+            return y0 + t * (y1 - y0)
+
+    return log_points[-1][1]
+
+
+def compute(total, points):
+    """Compute rank thresholds from distribution data points."""
     print(f"Total ranked players: {total:,}")
+    print(f"Data points: {len(points)}")
+    for frac, score in points:
+        pos = int(total * frac)
+        print(f"  top {frac*100:6.2f}%  pos ~{pos:>8,}  score {score:>7.1f}")
+    print()
+
     thresholds = {}
+    for rank_id, top_start, top_end in BRACKETS:
+        if rank_id == "IRON":
+            thresholds[rank_id] = {"minScore": 1, "wingScore": max(1, int(interpolate(0.95, points)))}
+            print(f"  {rank_id:15s}  min={1:5d}  wing={thresholds[rank_id]['wingScore']:5d}")
+            continue
 
-    for rank_id, top_pct, bot_pct in BRACKETS:
-        min_pos = max(0, min(total - 1, int(total * bot_pct) - 1))
-        mid_pos = max(0, min(total - 1, int(total * (top_pct + bot_pct) / 2)))
+        min_score = max(1, int(interpolate(top_end, points)))
 
-        min_score = max(1, client.score_at(min_pos))
-        wing_score = max(min_score, client.score_at(mid_pos))
+        # wingScore = score at midpoint of bracket
+        mid_frac = (top_start + top_end) / 2
+        wing_score = max(min_score, int(interpolate(mid_frac, points)))
+
+        # Challenger is always winged
+        if rank_id == "CHALLENGER":
+            wing_score = min_score
 
         thresholds[rank_id] = {"minScore": min_score, "wingScore": wing_score}
         print(f"  {rank_id:15s}  min={min_score:5d}  wing={wing_score:5d}")
 
-    return total, thresholds
+    return thresholds
 
 
 def write_json(total, thresholds):
@@ -130,7 +168,7 @@ def write_json(total, thresholds):
         json.dump(payload, f, indent=2)
         f.write("\n")
     tmp.rename(out)
-    print(f"Written to {out}")
+    print(f"\nWritten to {out}")
 
 
 def main():
@@ -138,8 +176,8 @@ def main():
     print(f"{datetime.now(timezone.utc).isoformat()}")
     print(f"Season: {SEASON} | Region: {REGION}\n")
 
-    client = RioClient()
-    total, thresholds = compute(client)
+    total, points = fetch_cutoffs()
+    thresholds = compute(total, points)
     write_json(total, thresholds)
     print("Done.")
 
