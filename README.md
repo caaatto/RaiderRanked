@@ -1,8 +1,8 @@
 # RaiderRanked
 
-League of Legends-style ranked system for World of Warcraft, based on Mythic+ scores.
+League of Legends-style ranked system for World of Warcraft, based on Mythic+ scores and PvP ratings.
 
-Players receive a rank (Iron through Challenger) with rank-up animations, portrait wings, tooltip integration, and a draggable HUD frame.
+Players receive a rank with rank-up animations, portrait wings, tooltip integration, and a draggable HUD frame. An optional PvP module adds ranked PvP support with animated electric auras around the player portrait.
 
 ## Installation
 
@@ -18,9 +18,16 @@ Download from [CurseForge](https://www.curseforge.com/wow/addons/raiderranked) o
 | `/rr set <RANK> <score>` | Override a threshold |
 | `/rr reset` | Restore default thresholds |
 | `/rr anim [from] to` | Preview rank-up animation |
-| `/rr wings <size>` | Resize portrait wings |
+| `/rr wings <size>` | Resize portrait wings (20–600) |
+| `/rr pvp` | Toggle PvP rank frame |
+| `/rr pvpranks` | Show PvP rank thresholds |
+| `/rr pvpaura test <rank>` | Preview a PvP aura (e.g. gladiator) |
+| `/rr pvpaura stop` | Stop aura preview |
+| `/rr pvpaura <size>` | Resize PvP aura (40–400) |
+| `/rr pvpdebug` | Dump PvP ratings per bracket |
+| `/rr test` | Run in-game test suite |
 
-## Rank Brackets
+## M+ Rank Brackets
 
 Thresholds are based on the current season's score distribution and updated daily via GitHub Actions.
 
@@ -36,6 +43,21 @@ Thresholds are based on the current season's score distribution and updated dail
 | Silver | 30 - 60% |
 | Bronze | 10 - 30% |
 | Iron | 0 - 10% |
+
+## PvP Rank Brackets
+
+Based on the highest current rating across all rated PvP brackets (2v2, 3v3, Solo Shuffle, Blitz BG, RBG). All PvP features are opt-in via the Settings panel.
+
+| Rank | Rating |
+|---|---|
+| Gladiator | 2400+ |
+| Elite | 2100+ |
+| Duelist | 1800+ |
+| Rival | 1600+ |
+| Challenger | 1400+ |
+| Combatant | 1000+ |
+
+PvP ratings for other players are acquired via addon messaging (instant, players with the addon share ratings automatically) with inspect as fallback.
 
 ## Threshold Auto-Update
 
