@@ -59,6 +59,26 @@ function RR:OnAddonLoaded()
         RaiderRankedDB.thresholds = self:GetDefaultThresholds()
     end
 
+    -- Auto-update saved thresholds when code defaults change (addon update).
+    -- Only overwrites values the user hasn't manually customised via /rr set.
+    local defaults = self:GetDefaultThresholds()
+    local saved    = RaiderRankedDB.thresholds
+    local oldDefaults = RaiderRankedDB.thresholdDefaults or {}
+    local changed = false
+    for id, newDefault in pairs(defaults) do
+        if newDefault ~= (oldDefaults[id] or 0) then
+            -- Code default changed — update saved value unless user customised it.
+            if not oldDefaults[id] or saved[id] == oldDefaults[id] then
+                saved[id] = newDefault
+                changed = true
+            end
+        end
+    end
+    RaiderRankedDB.thresholdDefaults = defaults
+    if changed then
+        print("|cff00ccffRaiderRanked|r Thresholds updated to new defaults.")
+    end
+
     self.db = RaiderRankedDB
     self:ApplyThresholds(self.db.thresholds)
     self:RegisterSlashCommands()
