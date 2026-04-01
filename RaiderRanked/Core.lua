@@ -137,6 +137,11 @@ end
 ---@param unit string  WoW unit token ("player", "target", "mouseover", …)
 ---@return number|nil score
 function RR:GetScoreForUnit(unit)
+    -- Skip non-players (enemies, NPCs) and low-level players (below 90).
+    if not UnitIsPlayer(unit) then return nil end
+    local level = UnitLevel(unit)
+    if level and level > 0 and level < 90 then return nil end
+
     -- 1. Native Blizzard API (no addon dependency).
     if C_PlayerInfo and C_PlayerInfo.GetPlayerMythicPlusRatingSummary then
         local ok, data = pcall(C_PlayerInfo.GetPlayerMythicPlusRatingSummary, unit)

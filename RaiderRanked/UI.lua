@@ -855,6 +855,13 @@ function RR:UpdateUnitWings(unit)
         return
     end
 
+    -- Skip low-level players who can't have M+ scores.
+    local level = UnitLevel(unit)
+    if level and level > 0 and level < 90 then
+        tex:Hide()
+        return
+    end
+
     local score = self:GetScoreForUnit(unit)
     local rank  = score and self:GetRankForScore(score)
     if not rank or rank.id == "UNRANKED" then
