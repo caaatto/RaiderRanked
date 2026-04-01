@@ -109,6 +109,7 @@ function RR:OnAddonLoaded()
     self.db = RaiderRankedDB
     self:ApplyThresholds(self.db.thresholds)
     self:ApplyPvPThresholds(self.db.pvpThresholds)
+    self:InitScoreHistory()
     self:RegisterSlashCommands()
 
     -- Settings panel must be registered during ADDON_LOADED (before UI is built).
@@ -205,6 +206,11 @@ function RR:RefreshPlayerRank()
 
     if self.UpdateRankFrame then
         self:UpdateRankFrame()
+    end
+
+    -- Record score history snapshot.
+    if self.RecordScoreSnapshot then
+        self:RecordScoreSnapshot()
     end
 
     -- Animate when rank improves (skip on very first load where oldRank is nil).
@@ -359,6 +365,18 @@ function RR:HandleSlashCommand(msg)
                 self:FormatRankName(rank), rank.id, rank.minScore))
         end
 
+    elseif msg == "history" then
+        self:ToggleHistoryGraph()
+
+    elseif msg:match("^history%s+clear$") then
+        if self.charDB then
+            self.charDB.scoreHistory = {}
+            print("|cff00ccffRaiderRanked|r Score history cleared.")
+            if self.historyFrame and self.historyFrame:IsShown() then
+                self:RefreshHistoryGraph()
+            end
+        end
+
     elseif msg == "pvp" then
         self:TogglePvPRankFrame()
 
@@ -391,6 +409,8 @@ function RR:HandleSlashCommand(msg)
         print("  /rr anim [from] to – preview rank-up animation")
         print("  /rr wings <size>   – resize portrait wings (default 160)")
         print("  /rr wingsdbg       – debug wings anchor/visibility")
+        print("  /rr history     – toggle score history graph")
+        print("  /rr history clear – clear all history data")
         print("  /rr debug       – dump raw score API output")
         print("  /rr pvp             – toggle PvP rank frame")
         print("  /rr pvpranks    – list PvP rank thresholds")

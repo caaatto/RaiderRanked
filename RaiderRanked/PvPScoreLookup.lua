@@ -19,7 +19,7 @@ RR.pvpCache = {}
 local function CacheKey(unit)
     local name, realm = UnitFullName(unit)
     if not name then return nil end
-    realm = realm and realm ~= "" and realm or GetNormalizedRealmName()
+    realm = realm and realm ~= "" and realm or GetNormalizedRealmName() or ""
     return name .. "-" .. realm
 end
 

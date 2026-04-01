@@ -18,6 +18,7 @@ PvPRankSystem.lua
 PvPScoreLookup.lua
 PvPAuraAnimation.lua
 Core.lua
+ScoreHistory.lua
 UI.lua
 Animation.lua
 Tests.lua

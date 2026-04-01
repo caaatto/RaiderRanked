@@ -420,8 +420,10 @@ function RR:HookTooltip()
     -- TooltipDataProcessor is available since Dragonflight and works in Midnight.
     if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
         TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip)
-            local _, unit = tooltip:GetUnit()
-            if not unit or not UnitIsPlayer(unit) then return end
+            local ok, _, unit = pcall(tooltip.GetUnit, tooltip)
+            if not ok or not unit then return end
+            local pOk, isPlayer = pcall(UnitIsPlayer, unit)
+            if not pOk or not isPlayer then return end
 
             -- M+ section.
             if RR.db.showInTooltip then
@@ -504,8 +506,10 @@ function RR:CreateMinimapButton()
         type = "launcher",
         icon = rank.icon or "Interface\\Icons\\inv_12_trinket_raid_dreamrift_gazeofthealnseer",
         OnClick = function(_, button)
-            if button == "LeftButton" then
+            if button == "LeftButton" and not IsShiftKeyDown() then
                 RR:ToggleRankFrame()
+            elseif button == "RightButton" then
+                RR:ToggleHistoryGraph()
             end
         end,
         OnTooltipShow = function(tooltip)
@@ -515,6 +519,8 @@ function RR:CreateMinimapButton()
                 tooltip:AddDoubleLine("M+ Score", string.format("%.0f", RR.playerScore or 0), 0.7,0.7,0.7, 1,1,1)
             end
             tooltip:AddLine("Left-click to toggle frame", 0.5, 0.5, 0.5)
+            tooltip:AddLine("Right-click for score history", 0.5, 0.5, 0.5)
+            tooltip:AddLine("Shift-click to move", 0.5, 0.5, 0.5)
         end,
     })
 
@@ -524,6 +530,16 @@ function RR:CreateMinimapButton()
 
     -- Expose the button frame for tests.
     self.minimapButton = icon:GetMinimapButton("RaiderRanked")
+
+    -- Override drag: only allow moving with Shift held.
+    if self.minimapButton then
+        local origDragStart = self.minimapButton:GetScript("OnDragStart")
+        self.minimapButton:SetScript("OnDragStart", function(btn)
+            if IsShiftKeyDown() and origDragStart then
+                origDragStart(btn)
+            end
+        end)
+    end
 
     -- Update the minimap icon texture whenever the rank refreshes.
     local origUpdate = RR.UpdateRankFrame
@@ -1002,6 +1018,23 @@ function RR:RegisterSettings()
         "Overlay rank wings on target, focus, and party portraits.",
         function() return self.db.showUnitWings ~= false end,
         function(val) self.db.showUnitWings = val; self:UpdateAllUnitWings() end)
+
+    -- History graph button (not a persistent toggle — just opens the graph).
+    do
+        local btn = CreateFrame("Button", nil, nil, "UIPanelButtonTemplate")
+        btn:SetSize(1, 1)  -- dummy; the initializer handles layout
+        if layout and layout.AddInitializer then
+            layout:AddInitializer(CreateFromMixins({
+                InitFrame = function(_, frame)
+                    local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+                    b:SetSize(160, 24)
+                    b:SetPoint("LEFT", frame, "LEFT", 10, 0)
+                    b:SetText("Open Score History")
+                    b:SetScript("OnClick", function() RR:ToggleHistoryGraph(true) end)
+                end,
+            }))
+        end
+    end
 
     AddCheckbox("showMinimap",
         "Show minimap button",
