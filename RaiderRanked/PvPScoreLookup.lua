@@ -259,16 +259,18 @@ function RR:RefreshPlayerPvPRank()
     local _, maxCR = self:GetOwnPvPScores()
     local newRank = self:GetPvPRankForCR(maxCR)
 
+    local charRanks = self:GetCharRanks()
+
     local oldRank = self.playerPvPRank
-    if not oldRank and self.db and self.db.lastPvPRankId then
-        oldRank = self.PVP_RANK_BY_ID[self.db.lastPvPRankId]
+    if not oldRank and charRanks and charRanks.lastPvPRankId then
+        oldRank = self.PVP_RANK_BY_ID[charRanks.lastPvPRankId]
     end
 
     self.playerPvPRank = newRank
     self.playerPvPScore = maxCR
 
-    if self.db then
-        self.db.lastPvPRankId = newRank.id
+    if charRanks then
+        charRanks.lastPvPRankId = newRank.id
     end
 
     if self.UpdatePvPRankFrame then

@@ -15,14 +15,14 @@ RR.DB_DEFAULTS = {
     showMinimap   = true,
     minimap       = { hide = false, minimapPos = 225 },  -- LibDBIcon settings
     framePosition = { point = "CENTER", x = 0, y = -200 },
-    lastRankId    = nil,  -- persisted so rank-ups are detected across sessions
+    lastRankId    = nil,  -- DEPRECATED: migrated to per-char charRanks[key]
     -- PvP
     pvpThresholds     = nil,
     showPvPFrame      = false,  -- opt-in via Settings
     showPvPInTooltip  = false,  -- opt-in via Settings
     showPvPAura       = false,  -- opt-in via Settings
     pvpFramePosition  = { point = "CENTER", x = 0, y = -300 },
-    lastPvPRankId     = nil,
+    lastPvPRankId     = nil,  -- DEPRECATED: migrated to per-char charRanks[key]
 }
 
 -- ── Addon frame / event registration ────────────────────────────────────────
@@ -51,6 +51,28 @@ frame:SetScript("OnEvent", function(self, event, ...)
         C_Timer.After(30, function() RR:RefreshPlayerRank() end)
     end
 end)
+
+-- ── Per-character rank helpers ──────────────────────────────────────────────
+
+local function CharKey()
+    local name  = UnitName("player")
+    local realm = GetNormalizedRealmName() or ""
+    if not name then return nil end
+    return name .. "-" .. realm
+end
+
+--- Returns the per-character rank sub-table, creating it if necessary.
+function RR:GetCharRanks()
+    if not self.db.charRanks then
+        self.db.charRanks = {}
+    end
+    local key = CharKey()
+    if not key then return nil end
+    if not self.db.charRanks[key] then
+        self.db.charRanks[key] = {}
+    end
+    return self.db.charRanks[key]
+end
 
 -- ── Lifecycle ────────────────────────────────────────────────────────────────
 
@@ -112,6 +134,12 @@ function RR:OnAddonLoaded()
     self:InitScoreHistory()
     self:RegisterSlashCommands()
 
+    -- Migrate old account-wide lastRankId / lastPvPRankId into per-char storage.
+    -- The old fields stay in the DB (harmless) but are no longer read.
+    if not self.db.charRanks then
+        self.db.charRanks = {}
+    end
+
     -- Settings panel must be registered during ADDON_LOADED (before UI is built).
     local ok, err = pcall(function() self:RegisterSettings() end)
     if not ok then
@@ -127,6 +155,13 @@ function RR:OnPlayerLogin()
 end
 
 function RR:OnEnteringWorld()
+    -- Clear in-memory rank state so a char switch doesn't carry over the
+    -- previous character's rank (which would cause a false rank-up detection).
+    self.playerRank     = nil
+    self.playerScore    = nil
+    self.playerPvPRank  = nil
+    self.playerPvPScore = nil
+
     -- Small delay: score API may not be populated immediately on zone-in.
     C_Timer.After(2, function() RR:RefreshPlayerRank() end)
 end
@@ -190,18 +225,20 @@ function RR:RefreshPlayerRank()
     local newRank, newScore = self:GetRankForUnit("player")
     if not newRank then return end
 
-    -- Resolve previous rank: in-memory first, then SavedVariables, then nil.
+    local charRanks = self:GetCharRanks()
+
+    -- Resolve previous rank: in-memory first, then per-char SavedVariables, then nil.
     local oldRank = self.playerRank
-    if not oldRank and self.db and self.db.lastRankId then
-        oldRank = self.RANK_BY_ID[self.db.lastRankId]
+    if not oldRank and charRanks and charRanks.lastRankId then
+        oldRank = self.RANK_BY_ID[charRanks.lastRankId]
     end
 
     self.playerRank  = newRank
     self.playerScore = newScore
 
-    -- Persist so we can detect rank-ups after a relog.
-    if self.db then
-        self.db.lastRankId = newRank.id
+    -- Persist per-character so rank-ups are detected correctly after relog/char switch.
+    if charRanks then
+        charRanks.lastRankId = newRank.id
     end
 
     if self.UpdateRankFrame then

@@ -126,8 +126,13 @@ local function ScaleTo(region, sx, sy, ex, ey, dur, smoothing, cb)
     table.insert(animGroups, g)
     local s = g:CreateAnimation("Scale")
     s:SetOrigin("CENTER", 0, 0)
-    s:SetFromScale(sx, sy)
-    s:SetToScale(ex, ey)
+    if s.SetFromScale then
+        s:SetFromScale(sx, sy)
+        s:SetToScale(ex, ey)
+    else
+        s:SetScaleFrom(sx, sy)
+        s:SetScaleTo(ex, ey)
+    end
     s:SetDuration(dur)
     s:SetSmoothing(smoothing or "OUT")
     if cb then
