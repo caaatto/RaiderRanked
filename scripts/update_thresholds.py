@@ -18,7 +18,8 @@ SEASON = os.getenv("RR_SEASON", "season-mn-1")
 REGION = os.getenv("RR_REGION", "eu")
 OUTPUT_DIR = Path(os.getenv("RR_OUTPUT_DIR", "."))
 
-RIO_BASE = "https://raider.io/api/v1"
+RIO_BASE = "https://raider.io/api"
+RIO_V1 = "https://raider.io/api/v1"
 TOP_100_POSITION = 99  # 0-indexed: position 99 = 100th player
 REQUEST_DELAY = 0.4
 
@@ -45,7 +46,7 @@ def fetch_cutoffs():
     built from percentile cutoffs + keystone achievement cutoffs.
     """
     resp = requests.get(
-        f"{RIO_BASE}/mythic-plus/season-cutoffs",
+        f"{RIO_V1}/mythic-plus/season-cutoffs",
         params={"season": SEASON, "region": REGION},
         headers={"User-Agent": "RaiderRanked-Updater/1.0"},
         timeout=30,
@@ -92,30 +93,31 @@ def fetch_cutoffs():
 
 def fetch_top100_score():
     """Fetch the score of the 100th ranked player from the rankings API."""
+    page = TOP_100_POSITION // 100  # default pageSize is 100
+    offset = TOP_100_POSITION % 100
+
     resp = requests.get(
         f"{RIO_BASE}/mythic-plus/rankings/characters",
-        params={"season": SEASON, "region": REGION, "page": TOP_100_POSITION // 20},
+        params={
+            "season": SEASON,
+            "region": REGION,
+            "class": "all",
+            "role": "all",
+            "page": page,
+        },
         headers={"User-Agent": "RaiderRanked-Updater/1.0"},
         timeout=30,
     )
     resp.raise_for_status()
     data = resp.json()
 
-    inner = data.get("rankingData", data)
-    entries = inner.get("rankings", inner.get("characters", []))
+    rankings = data.get("rankings", {})
+    entries = rankings.get("rankedCharacters", [])
 
-    offset = TOP_100_POSITION % 20
     if offset < len(entries):
-        entry = entries[offset]
-        for key in ("score", "mythicPlusScore", "mythic_plus_score"):
-            val = entry.get(key)
-            if isinstance(val, (int, float)):
-                return max(1, int(val))
-        char = entry.get("character", {})
-        for key in ("score", "mythicPlusScore"):
-            val = char.get(key)
-            if isinstance(val, (int, float)):
-                return max(1, int(val))
+        score = entries[offset].get("score", 0)
+        if isinstance(score, (int, float)):
+            return max(1, int(score))
     return 0
 
 
