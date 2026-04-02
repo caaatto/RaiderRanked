@@ -212,48 +212,6 @@ function RR:TestPvPAura(rankName)
     print("  /rr pvpaura stop — to stop")
 end
 
-function RR:TestCustomAura(sheetPath, frameCount, fps, pause, rows)
-    if not pvpAuraBackTex then
-        self:CreatePvPAura()
-    end
-    if not pvpAuraBackTex then
-        print("|cff00ccffRaiderRanked|r PvP aura not initialised (need PlayerFrame).")
-        return
-    end
-
-    local portrait = GetPlayerPortrait()
-    if not portrait then
-        print("|cff00ccffRaiderRanked|r PlayerPortrait not found.")
-        return
-    end
-
-    -- Reset blend mode back to ADD (black background becomes transparent).
-    if pvpAuraBackTex then
-        pvpAuraBackTex:SetBlendMode("ADD")
-        pvpAuraBackTex:SetAlpha(1)
-        pvpAuraBackTex:SetSize(200, 200)
-    end
-    if pvpAuraFrontTex then
-        pvpAuraFrontTex:SetBlendMode("ADD")
-        pvpAuraFrontTex:SetAlpha(0.5)
-        pvpAuraFrontTex:SetSize(200, 200)
-    end
-
-    local fakeRank = {
-        auraSheet  = sheetPath,
-        auraFrames = frameCount or (COLS * ROWS),
-        auraFPS    = fps or FPS,
-        auraPause  = pause or 0,
-        auraRows   = rows or ROWS,
-        auraOffsetX = 60,
-        auraOffsetY = 0,
-    }
-    ApplyAura(fakeRank, portrait)
-
-    print("|cff00ccffRaiderRanked|r Testing custom aura: " .. sheetPath)
-    print(string.format("  Frames: %d, FPS: %.1f, Cycle: %.1fs", fakeRank.auraFrames, fakeRank.auraFPS, fakeRank.auraFrames / fakeRank.auraFPS))
-    print("  /rr pvpaura stop — to stop")
-end
 
 function RR:StopPvPAuraTest()
     self:StopPvPAura()
