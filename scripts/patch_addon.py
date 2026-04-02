@@ -13,12 +13,19 @@ def patch(lua_path, thresholds_path):
     with open(thresholds_path) as f:
         data = json.load(f)
     thresholds = data["thresholds"]
+    top100_score = data.get("top100Score")
 
     with open(lua_path) as f:
         lines = f.readlines()
 
     current_rank = None
     for i, line in enumerate(lines):
+        # Patch TOP_100_SCORE
+        if top100_score is not None:
+            m = re.match(r'(RR\.TOP_100_SCORE\s*=\s*)\d+(.*)', line)
+            if m:
+                lines[i] = f'{m.group(1)}{top100_score}{m.group(2)}\n'
+
         m = re.match(r'\s*id\s*=\s*"(\w+)"', line)
         if m:
             current_rank = m.group(1)
