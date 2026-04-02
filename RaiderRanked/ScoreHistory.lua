@@ -76,6 +76,13 @@ function RR:InitScoreHistory()
         RaiderRankedCharDB.scoreHistory = nil
     end
 
+    -- Clean up empty or malformed entries (e.g. "Name-" without realm).
+    for k, history in pairs(self.db.charHistory) do
+        if not history or #history == 0 or k:match("%-$") then
+            self.db.charHistory[k] = nil
+        end
+    end
+
     -- Ensure current char has an entry.
     local key = CharKey()
     if key and not self.db.charHistory[key] then

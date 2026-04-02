@@ -219,6 +219,11 @@ function RR:RefreshPlayerRank()
             self:PlayRankUpAnimation(oldRank, newRank, newScore)
         end
     end
+
+    -- Start PvE Top-100 aura ticker (idempotent — only starts once).
+    if self.StartPveAuraTicker then
+        self:StartPveAuraTicker()
+    end
 end
 
 -- ── Debug ─────────────────────────────────────────────────────────────────────
@@ -389,6 +394,41 @@ function RR:HandleSlashCommand(msg)
 
     elseif msg == "pvpdebug" then
         self:DebugPvPScore()
+
+    elseif msg:match("^testaura%s*(%d*)$") then
+        local num = tonumber(msg:match("^testaura%s*(%d+)$"))
+        if not num or num < 1 or num > 17 then
+            print("|cff00ccffRaiderRanked|r Usage: /rr testaura 1-17")
+            return
+        end
+        local sheetData = {
+            { frames = 40, rows = 5 },   -- 01
+            { frames = 40, rows = 5 },   -- 02
+            { frames = 56, rows = 7 },   -- 03
+            { frames = 72, rows = 9 },   -- 04
+            { frames = 40, rows = 5 },   -- 05
+            { frames = 40, rows = 5 },   -- 06
+            { frames = 40, rows = 5 },   -- 07
+            { frames = 128, rows = 16 }, -- 08
+            { frames = 104, rows = 13 }, -- 09
+            { frames = 80, rows = 10 },  -- 10
+            { frames = 64, rows = 8 },   -- 11
+            { frames = 48, rows = 6 },   -- 12
+            { frames = 104, rows = 13 }, -- 13
+            { frames = 56, rows = 7 },   -- 14
+            { frames = 72, rows = 9 },   -- 15
+            { frames = 48, rows = 6 },   -- 16
+            { frames = 80, rows = 10 },  -- 17
+        }
+        local d = sheetData[num]
+        local path = string.format("Interface\\AddOns\\RaiderRanked\\Media\\Electricity\\electricity_%02d_sheet.png", num)
+        local fps = d.frames / 0.8  -- 0.8s cycle
+        self:TestCustomAura(path, d.frames, fps, 0, d.rows)
+        print(string.format("|cff00ccffRaiderRanked|r electricity_%02d: %d frames, %d rows", num, d.frames, d.rows))
+
+    elseif msg == "testpve" then
+        print("|cff00ccffRaiderRanked|r Playing PvE Top-100 aura...")
+        self:PlayPveAura()
 
     elseif msg:match("^pvpaura%s+test%s+%S+$") then
         self:TestPvPAura(msg:match("^pvpaura%s+test%s+(%S+)$"))

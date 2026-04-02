@@ -242,6 +242,7 @@ function RR:InitUI()
     self:CreateMinimapButton()
     self:CreatePortraitWings()
     self:CreatePvPAura()
+    self:CreatePveAura()
     self:InitUnitWings()
 end
 
@@ -967,9 +968,14 @@ function RR:RegisterSettings()
         -- Settings.CreateCheckboxInitializer (TWW+) or fall back to AddSetting.
         local initializer
         if Settings.CreateCheckboxInitializer then
-            initializer = Settings.CreateCheckboxInitializer(setting, name, tooltip)
-        elseif Settings.CreateSettingInitializerFrame then
-            initializer = Settings.CreateSettingInitializerFrame(setting)
+            local options = Settings.CreateCheckboxOptions and Settings.CreateCheckboxOptions(name, tooltip)
+            if options then
+                initializer = Settings.CreateCheckboxInitializer(setting, options)
+            else
+                -- Fallback: try single-arg form (setting carries its own name).
+                local ok, result = pcall(Settings.CreateCheckboxInitializer, setting)
+                if ok then initializer = result end
+            end
         end
         if initializer and layout and layout.AddInitializer then
             layout:AddInitializer(initializer)
@@ -1019,22 +1025,8 @@ function RR:RegisterSettings()
         function() return self.db.showUnitWings ~= false end,
         function(val) self.db.showUnitWings = val; self:UpdateAllUnitWings() end)
 
-    -- History graph button (not a persistent toggle — just opens the graph).
-    do
-        local btn = CreateFrame("Button", nil, nil, "UIPanelButtonTemplate")
-        btn:SetSize(1, 1)  -- dummy; the initializer handles layout
-        if layout and layout.AddInitializer then
-            layout:AddInitializer(CreateFromMixins({
-                InitFrame = function(_, frame)
-                    local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-                    b:SetSize(160, 24)
-                    b:SetPoint("LEFT", frame, "LEFT", 10, 0)
-                    b:SetText("Open Score History")
-                    b:SetScript("OnClick", function() RR:ToggleHistoryGraph(true) end)
-                end,
-            }))
-        end
-    end
+    -- History graph button — removed from settings layout to avoid ShouldShow errors.
+    -- Use right-click on minimap button or /rr history instead.
 
     AddCheckbox("showMinimap",
         "Show minimap button",

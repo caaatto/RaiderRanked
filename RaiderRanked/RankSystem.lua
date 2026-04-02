@@ -187,6 +187,15 @@ for _, rank in ipairs(RR.RANKS) do
     RR.RANK_BY_ID[rank.id] = rank
 end
 
+-- ── Top 100 threshold ─────────────────────────────────────────────────────
+-- Updated periodically. Players at or above this score get a special aura.
+RR.TOP_100_SCORE = 3549
+
+--- Returns true if the given score qualifies for Top 100.
+function RR:IsTop100(score)
+    return score and score >= self.TOP_100_SCORE
+end
+
 -- Snapshot of original code-defined thresholds, captured before any SavedVariables
 -- override can mutate RR.RANKS. GetDefaultThresholds() reads from here so that
 -- /rr reset always restores the values from this file, not from a mutated RANKS table.
