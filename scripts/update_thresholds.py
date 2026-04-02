@@ -10,6 +10,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import time
+
 import requests
 
 SEASON = os.getenv("RR_SEASON", "season-mn-1")
@@ -17,6 +19,8 @@ REGION = os.getenv("RR_REGION", "eu")
 OUTPUT_DIR = Path(os.getenv("RR_OUTPUT_DIR", "."))
 
 RIO_BASE = "https://raider.io/api/v1"
+TOP_100_POSITION = 99  # 0-indexed: position 99 = 100th player
+REQUEST_DELAY = 0.4
 
 # Bracket definitions: (rank_id, top_pct_start, top_pct_end)
 # e.g. Challenger = top 0% to 0.1% of all players
@@ -86,6 +90,35 @@ def fetch_cutoffs():
     return total, filtered
 
 
+def fetch_top100_score():
+    """Fetch the score of the 100th ranked player from the rankings API."""
+    resp = requests.get(
+        f"{RIO_BASE}/mythic-plus/rankings/characters",
+        params={"season": SEASON, "region": REGION, "page": TOP_100_POSITION // 20},
+        headers={"User-Agent": "RaiderRanked-Updater/1.0"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    inner = data.get("rankingData", data)
+    entries = inner.get("rankings", inner.get("characters", []))
+
+    offset = TOP_100_POSITION % 20
+    if offset < len(entries):
+        entry = entries[offset]
+        for key in ("score", "mythicPlusScore", "mythic_plus_score"):
+            val = entry.get(key)
+            if isinstance(val, (int, float)):
+                return max(1, int(val))
+        char = entry.get("character", {})
+        for key in ("score", "mythicPlusScore"):
+            val = char.get(key)
+            if isinstance(val, (int, float)):
+                return max(1, int(val))
+    return 0
+
+
 def interpolate(top_frac, points):
     """Piecewise linear interpolation in log10(top_fraction) space.
 
@@ -152,7 +185,7 @@ def compute(total, points):
     return thresholds
 
 
-def write_json(total, thresholds):
+def write_json(total, top100_score, thresholds):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUTPUT_DIR / "thresholds.json"
 
@@ -160,6 +193,7 @@ def write_json(total, thresholds):
         "season": SEASON,
         "updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "totalPlayers": total,
+        "top100Score": top100_score,
         "thresholds": thresholds,
     }
 
@@ -178,7 +212,12 @@ def main():
 
     total, points = fetch_cutoffs()
     thresholds = compute(total, points)
-    write_json(total, thresholds)
+
+    time.sleep(REQUEST_DELAY)
+    top100_score = fetch_top100_score()
+    print(f"\n  Top 100 score (pos {TOP_100_POSITION + 1}): {top100_score}")
+
+    write_json(total, top100_score, thresholds)
     print("Done.")
 
 
