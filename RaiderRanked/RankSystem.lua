@@ -189,7 +189,7 @@ end
 
 -- ── Top 100 threshold ─────────────────────────────────────────────────────
 -- Updated periodically. Players at or above this score get a special aura.
-RR.TOP_100_SCORE = 3508
+RR.TOP_100_SCORE = 3513
 
 --- Returns true if the given score qualifies for Top 100.
 function RR:IsTop100(score)
