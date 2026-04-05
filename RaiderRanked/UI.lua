@@ -15,6 +15,108 @@ local function ColorHex(r, g, b)
     return string.format("|cff%02x%02x%02x", math.floor(r*255), math.floor(g*255), math.floor(b*255))
 end
 
+-- ── Custom tooltip ───────────────────────────────────────────────────────────
+-- Lightweight tooltip replacement used by the rank frame so we can position it
+-- center-left / center-right of the owner without touching GameTooltip (manual
+-- SetPoint on GameTooltip taints it, which propagates into Blizzard secure
+-- chat code). This frame is fully insecure and owned by us, so SetPoint is
+-- free.
+
+local rrTooltip
+local rrTooltipLines = {}
+local TIP_PAD_X, TIP_PAD_Y, TIP_LINE_GAP = 10, 8, 4
+local TIP_LINE_H = 14  -- fixed per-line height for GameTooltipText (size 12);
+                       -- avoids GetStringHeight() returning stale values on
+                       -- FontStrings that were recently re-shown.
+
+local function EnsureRRTooltip()
+    if rrTooltip then return rrTooltip end
+    local t = CreateFrame("Frame", "RaiderRankedTooltip", UIParent, "BackdropTemplate")
+    t:SetFrameStrata("TOOLTIP")
+    t:SetBackdrop({
+        bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    t:SetBackdropColor(0, 0, 0, 0.92)
+    t:Hide()
+    rrTooltip = t
+    return t
+end
+
+--- Shows the custom tooltip centered vertically beside an owner frame.
+--- @param owner frame      The frame to anchor to.
+--- @param side  string     "right" places tooltip right of owner, "left" = left.
+--- @param lines table      Array of { text = "...", r, g, b } entries.
+local function ShowRRTooltip(owner, side, lines)
+    local t = EnsureRRTooltip()
+
+    -- Create / reuse FontStrings. We NEVER hide FontStrings — unused slots
+    -- just get empty text. Hiding + re-showing in the same frame tick
+    -- makes GetStringHeight/Width return stale zeros until the next layout
+    -- pass, which collapses the tooltip into a bunched-up mess on the
+    -- next transition (e.g. lock → frame).
+    local slotCount = math.max(#lines, #rrTooltipLines)
+    for i = 1, slotCount do
+        local fs = rrTooltipLines[i]
+        if not fs then
+            fs = t:CreateFontString(nil, "OVERLAY", "GameTooltipText")
+            rrTooltipLines[i] = fs
+        end
+        if i <= #lines then
+            fs:SetText(lines[i].text)
+            fs:SetTextColor(lines[i].r or 1, lines[i].g or 1, lines[i].b or 1)
+        else
+            fs:SetText("")
+        end
+    end
+
+    -- Max width from the currently-visible lines. GetStringWidth is stable
+    -- for always-shown FontStrings.
+    local maxW = 0
+    for i = 1, #lines do
+        local w = rrTooltipLines[i]:GetStringWidth()
+        if w > maxW then maxW = w end
+    end
+
+    -- Absolute Y layout with a fixed per-line height. No GetStringHeight
+    -- dependency — deterministic across re-layouts.
+    local y = TIP_PAD_Y
+    for i = 1, #lines do
+        local fs = rrTooltipLines[i]
+        fs:ClearAllPoints()
+        fs:SetHeight(TIP_LINE_H)
+        fs:SetPoint("TOPLEFT",  t, "TOPLEFT",  TIP_PAD_X, -y)
+        fs:SetPoint("TOPRIGHT", t, "TOPRIGHT", -TIP_PAD_X, -y)
+        fs:SetJustifyH("LEFT")
+        y = y + TIP_LINE_H
+        if i < #lines then y = y + TIP_LINE_GAP end
+    end
+    -- Park unused slots off to the side so they don't accidentally render
+    -- where the last content used to be (they have empty text anyway,
+    -- but this keeps anchors clean).
+    for i = #lines + 1, slotCount do
+        local fs = rrTooltipLines[i]
+        fs:ClearAllPoints()
+        fs:SetPoint("TOPLEFT", t, "TOPLEFT", 0, 0)
+    end
+    t:SetSize(maxW + TIP_PAD_X * 2, y + TIP_PAD_Y)
+
+    -- Vertically centered on owner, placed directly beside it.
+    t:ClearAllPoints()
+    if side == "right" then
+        t:SetPoint("LEFT", owner, "RIGHT", 6, 0)
+    else
+        t:SetPoint("RIGHT", owner, "LEFT", -6, 0)
+    end
+    t:Show()
+end
+
+local function HideRRTooltip()
+    if rrTooltip then rrTooltip:Hide() end
+end
+
 -- ── Rank Frame ───────────────────────────────────────────────────────────────
 
 local rankFrame
@@ -78,15 +180,93 @@ local function CreateRankFrame()
         RR.db.frameLocked = not RR.db.frameLocked
         UpdateLockIcon()
     end)
-    lockBtn:SetScript("OnEnter", function(self)
+    -- Custom tooltip sits directly beside the frame, vertically centered.
+    -- Side is chosen by which half of the screen the frame is on, and
+    -- flipped instantly during drag via an OnUpdate hook. Uses our own
+    -- insecure tooltip frame to avoid tainting GameTooltip.
+    local currentSide    -- "right" or "left"
+    local tooltipLines   -- current line array; nil when hidden
+    local function DesiredSide()
+        local cx = f:GetCenter()
+        local sw = UIParent:GetWidth()
+        if cx and cx < sw / 2 then return "right" end
+        return "left"
+    end
+    local function ApplyTooltipSide(side)
+        if not tooltipLines then return end
+        ShowRRTooltip(f, side, tooltipLines)
+        currentSide = side
+    end
+
+    -- Single source of truth for what the tooltip should show, based on
+    -- the cursor's current mouse region. Guarded by a state token so the
+    -- lines are only rebuilt on actual transitions — called every frame
+    -- from OnUpdate while the cursor is anywhere over the rank frame.
+    --
+    -- Why OnUpdate and not just OnEnter/OnLeave: moving from the lock
+    -- button back onto the frame body does NOT re-fire f:OnEnter (the
+    -- button is a child inside f's bounds, so WoW never considers f
+    -- "left"). Also, when f:OnEnter shows the lock button for the first
+    -- time, lockBtn:IsMouseOver() is still false in the same frame tick
+    -- and lockBtn:OnEnter doesn't fire until the next mouse move — so
+    -- a quick hover directly onto the button's area would show the
+    -- frame tooltip instead of the lock tooltip.
+    local currentState   -- "lock", "frame", or nil
+    local function UpdateTooltip()
+        local newState
+        if lockBtn:IsShown() and lockBtn:IsMouseOver() then
+            newState = "lock"
+        elseif f:IsMouseOver() then
+            newState = "frame"
+        else
+            newState = nil
+        end
+        if newState == currentState then return end
+        currentState = newState
+
+        if newState == "lock" then
+            tooltipLines = {
+                { text = RR.db.frameLocked and "Unlock frame" or "Lock frame",
+                  r = 1, g = 1, b = 1 },
+            }
+            ApplyTooltipSide(DesiredSide())
+        elseif newState == "frame" then
+            tooltipLines = {
+                { text = "RaiderRanked", r = 0, g = 0.8, b = 1 },
+                { text = "Left-click to show group ranks", r = 1, g = 1, b = 1 },
+                { text = RR.db.frameLocked and "Frame locked (click lock icon to unlock)"
+                    or "Left-drag to move", r = 0.7, g = 0.7, b = 0.7 },
+                { text = "Right-click to hide  (/rr to show)", r = 0.7, g = 0.7, b = 0.7 },
+            }
+            ApplyTooltipSide(DesiredSide())
+        else
+            tooltipLines = nil
+            HideRRTooltip()
+        end
+    end
+
+    f:HookScript("OnUpdate", function()
+        -- Catch the one OnEnter race: f:OnEnter just showed lockBtn and
+        -- the cursor was already geometrically over it, so lockBtn:OnEnter
+        -- never fires (no mouse movement event). Flip to the lock state
+        -- here. All other transitions are handled by OnEnter/OnLeave.
+        if currentState == "frame" and lockBtn:IsShown() and lockBtn:IsMouseOver() then
+            UpdateTooltip()
+        end
+        -- Side flipping during drag.
+        if not tooltipLines then return end
+        local side = DesiredSide()
+        if side ~= currentSide then
+            ApplyTooltipSide(side)
+        end
+    end)
+
+    lockBtn:SetScript("OnEnter", function()
         lockBtn:Show()  -- keep visible while cursor is on the button itself
-        GameTooltip:SetOwner(f, "ANCHOR_TOP")
-        GameTooltip:AddLine(RR.db.frameLocked and "Unlock frame" or "Lock frame",
-            1, 1, 1)
-        GameTooltip:Show()
+        UpdateTooltip()
     end)
     lockBtn:SetScript("OnLeave", function()
-        GameTooltip:Hide()
+        UpdateTooltip()
         if not f:IsMouseOver() then lockBtn:Hide() end
     end)
 
@@ -119,21 +299,24 @@ local function CreateRankFrame()
         end
     end)
 
-    f:SetScript("OnEnter", function(self)
+    f:SetScript("OnEnter", function()
         lockBtn:Show()
-        GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:AddLine("RaiderRanked", 0, 0.8, 1)
-        GameTooltip:AddLine("Left-click to show group ranks", 1, 1, 1)
-        GameTooltip:AddLine(RR.db.frameLocked and "Frame locked (click lock icon to unlock)"
-            or "Left-drag to move", 0.7, 0.7, 0.7)
-        GameTooltip:AddLine("Right-click to hide  (/rr to show)", 0.7, 0.7, 0.7)
-        GameTooltip:Show()
+        UpdateTooltip()
     end)
     f:SetScript("OnLeave", function(self)
-        GameTooltip:Hide()
+        UpdateTooltip()
         if not self:IsMouseOver() and not lockBtn:IsMouseOver() then
             lockBtn:Hide()
         end
+    end)
+    -- Right-click hides the frame — make sure the tooltip and lock button
+    -- follow. OnLeave does not fire when a frame is hidden while the
+    -- cursor is still over it, so we clean up explicitly here.
+    f:HookScript("OnHide", function()
+        currentState = nil
+        tooltipLines = nil
+        HideRRTooltip()
+        lockBtn:Hide()
     end)
 
     return f
