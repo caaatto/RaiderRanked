@@ -78,47 +78,14 @@ local function CreateRankFrame()
         RR.db.frameLocked = not RR.db.frameLocked
         UpdateLockIcon()
     end)
-    -- Tooltip sits beside the frame: ANCHOR_RIGHT when the frame is on the
-    -- left half of the screen, ANCHOR_LEFT otherwise. We use Blizzard's
-    -- built-in owner anchors (not manual SetPoint) to avoid tainting
-    -- GameTooltip — manual SetPoint onto an insecure frame propagates taint
-    -- into shared globals and breaks secure chat code.
-    local currentSide      -- "right" or "left" — tracks currently applied anchor
-    local tooltipBuilder   -- function that re-adds tooltip lines after SetOwner
-    local function DesiredSide()
-        local cx = f:GetCenter()
-        local sw = UIParent:GetWidth()
-        if cx and cx < sw / 2 then return "right" end
-        return "left"
-    end
-    local function ApplyTooltipSide(side)
-        GameTooltip:SetOwner(f, side == "right" and "ANCHOR_RIGHT" or "ANCHOR_LEFT")
-        if tooltipBuilder then tooltipBuilder() end
-        GameTooltip:Show()
-        currentSide = side
-    end
-
-    -- While the tooltip is owned by this frame (hover OR drag), re-evaluate
-    -- which side it should sit on every frame and flip instantly if the
-    -- frame's center crosses the screen midpoint.
-    f:HookScript("OnUpdate", function()
-        if GameTooltip:GetOwner() ~= f then return end
-        local side = DesiredSide()
-        if side ~= currentSide then
-            ApplyTooltipSide(side)
-        end
-    end)
-
     lockBtn:SetScript("OnEnter", function(self)
         lockBtn:Show()  -- keep visible while cursor is on the button itself
-        tooltipBuilder = function()
-            GameTooltip:AddLine(RR.db.frameLocked and "Unlock frame" or "Lock frame",
-                1, 1, 1)
-        end
-        ApplyTooltipSide(DesiredSide())
+        GameTooltip:SetOwner(f, "ANCHOR_TOP")
+        GameTooltip:AddLine(RR.db.frameLocked and "Unlock frame" or "Lock frame",
+            1, 1, 1)
+        GameTooltip:Show()
     end)
     lockBtn:SetScript("OnLeave", function()
-        tooltipBuilder = nil
         GameTooltip:Hide()
         if not f:IsMouseOver() then lockBtn:Hide() end
     end)
@@ -154,17 +121,15 @@ local function CreateRankFrame()
 
     f:SetScript("OnEnter", function(self)
         lockBtn:Show()
-        tooltipBuilder = function()
-            GameTooltip:AddLine("RaiderRanked", 0, 0.8, 1)
-            GameTooltip:AddLine("Left-click to show group ranks", 1, 1, 1)
-            GameTooltip:AddLine(RR.db.frameLocked and "Frame locked (click lock icon to unlock)"
-                or "Left-drag to move", 0.7, 0.7, 0.7)
-            GameTooltip:AddLine("Right-click to hide  (/rr to show)", 0.7, 0.7, 0.7)
-        end
-        ApplyTooltipSide(DesiredSide())
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine("RaiderRanked", 0, 0.8, 1)
+        GameTooltip:AddLine("Left-click to show group ranks", 1, 1, 1)
+        GameTooltip:AddLine(RR.db.frameLocked and "Frame locked (click lock icon to unlock)"
+            or "Left-drag to move", 0.7, 0.7, 0.7)
+        GameTooltip:AddLine("Right-click to hide  (/rr to show)", 0.7, 0.7, 0.7)
+        GameTooltip:Show()
     end)
     f:SetScript("OnLeave", function(self)
-        tooltipBuilder = nil
         GameTooltip:Hide()
         if not self:IsMouseOver() and not lockBtn:IsMouseOver() then
             lockBtn:Hide()
