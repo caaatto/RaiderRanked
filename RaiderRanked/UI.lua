@@ -78,30 +78,25 @@ local function CreateRankFrame()
         RR.db.frameLocked = not RR.db.frameLocked
         UpdateLockIcon()
     end)
-    -- Anchors GameTooltip to the right of the frame when the frame is on the
-    -- left half of the screen, and to the left otherwise. Switches instantly
-    -- at the midpoint so the tooltip never overlaps the frame.
-    local currentSide  -- "right" or "left" — tracked to avoid redundant re-anchors
-    local function ApplyTooltipSide(side)
-        GameTooltip:ClearAllPoints()
-        if side == "right" then
-            GameTooltip:SetPoint("TOPLEFT", f, "TOPRIGHT", 4, 0)
-        else
-            GameTooltip:SetPoint("TOPRIGHT", f, "TOPLEFT", -4, 0)
-        end
-        currentSide = side
-    end
+    -- Tooltip sits beside the frame: ANCHOR_RIGHT when the frame is on the
+    -- left half of the screen, ANCHOR_LEFT otherwise. We use Blizzard's
+    -- built-in owner anchors (not manual SetPoint) to avoid tainting
+    -- GameTooltip — manual SetPoint onto an insecure frame propagates taint
+    -- into shared globals and breaks secure chat code.
+    local currentSide      -- "right" or "left" — tracks currently applied anchor
+    local tooltipBuilder   -- function that re-adds tooltip lines after SetOwner
     local function DesiredSide()
         local cx = f:GetCenter()
         local sw = UIParent:GetWidth()
         if cx and cx < sw / 2 then return "right" end
         return "left"
     end
-    local function AnchorTooltipBesideFrame()
-        GameTooltip:SetOwner(f, "ANCHOR_NONE")
-        ApplyTooltipSide(DesiredSide())
+    local function ApplyTooltipSide(side)
+        GameTooltip:SetOwner(f, side == "right" and "ANCHOR_RIGHT" or "ANCHOR_LEFT")
+        if tooltipBuilder then tooltipBuilder() end
+        GameTooltip:Show()
+        currentSide = side
     end
-    f.AnchorTooltipBesideFrame = AnchorTooltipBesideFrame
 
     -- While the tooltip is owned by this frame (hover OR drag), re-evaluate
     -- which side it should sit on every frame and flip instantly if the
@@ -116,13 +111,15 @@ local function CreateRankFrame()
 
     lockBtn:SetScript("OnEnter", function(self)
         lockBtn:Show()  -- keep visible while cursor is on the button itself
-        AnchorTooltipBesideFrame()
-        GameTooltip:AddLine(RR.db.frameLocked and "Unlock frame" or "Lock frame",
-            1, 1, 1)
-        GameTooltip:Show()
+        tooltipBuilder = function()
+            GameTooltip:AddLine(RR.db.frameLocked and "Unlock frame" or "Lock frame",
+                1, 1, 1)
+        end
+        ApplyTooltipSide(DesiredSide())
     end)
     lockBtn:SetScript("OnLeave", function()
-        GameTooltip_Hide()
+        tooltipBuilder = nil
+        GameTooltip:Hide()
         if not f:IsMouseOver() then lockBtn:Hide() end
     end)
 
@@ -157,16 +154,18 @@ local function CreateRankFrame()
 
     f:SetScript("OnEnter", function(self)
         lockBtn:Show()
-        AnchorTooltipBesideFrame()
-        GameTooltip:AddLine("RaiderRanked", 0, 0.8, 1)
-        GameTooltip:AddLine("Left-click to show group ranks", 1, 1, 1)
-        GameTooltip:AddLine(RR.db.frameLocked and "Frame locked (click lock icon to unlock)"
-            or "Left-drag to move", 0.7, 0.7, 0.7)
-        GameTooltip:AddLine("Right-click to hide  (/rr to show)", 0.7, 0.7, 0.7)
-        GameTooltip:Show()
+        tooltipBuilder = function()
+            GameTooltip:AddLine("RaiderRanked", 0, 0.8, 1)
+            GameTooltip:AddLine("Left-click to show group ranks", 1, 1, 1)
+            GameTooltip:AddLine(RR.db.frameLocked and "Frame locked (click lock icon to unlock)"
+                or "Left-drag to move", 0.7, 0.7, 0.7)
+            GameTooltip:AddLine("Right-click to hide  (/rr to show)", 0.7, 0.7, 0.7)
+        end
+        ApplyTooltipSide(DesiredSide())
     end)
     f:SetScript("OnLeave", function(self)
-        GameTooltip_Hide()
+        tooltipBuilder = nil
+        GameTooltip:Hide()
         if not self:IsMouseOver() and not lockBtn:IsMouseOver() then
             lockBtn:Hide()
         end
