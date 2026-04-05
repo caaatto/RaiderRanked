@@ -35,10 +35,12 @@ local function CreateRankFrame()
     local pos = RR.db.framePosition
     f:SetPoint(pos.point, UIParent, pos.point, pos.x, pos.y)
     f:SetMovable(true)
+    f:SetClampedToScreen(true)
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
     local didDrag = false
     f:SetScript("OnDragStart", function(self)
+        if RR.db.frameLocked then return end
         didDrag = true
         self:StartMoving()
     end)
@@ -46,6 +48,82 @@ local function CreateRankFrame()
         self:StopMovingOrSizing()
         local point, _, _, x, y = self:GetPoint()
         RR.db.framePosition = { point = point, x = x, y = y }
+    end)
+
+    -- Lock button — shown only on hover, toggles frame drag lock.
+    local lockBtn = CreateFrame("Button", nil, f)
+    lockBtn:SetSize(30, 30)
+    lockBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, -6)
+    lockBtn:SetFrameLevel(f:GetFrameLevel() + 10)
+    local lockTex = lockBtn:CreateTexture(nil, "OVERLAY")
+    lockTex:SetAllPoints()
+    lockBtn.tex = lockTex
+    lockBtn:Hide()
+    f.lockBtn = lockBtn
+
+    local function UpdateLockIcon()
+        if RR.db.frameLocked then
+            lockTex:SetTexture("Interface\\Buttons\\LockButton-Locked-Up")
+            lockTex:SetVertexColor(1, 0.82, 0)  -- gold when locked
+        else
+            lockTex:SetTexture("Interface\\Buttons\\LockButton-Unlocked-Up")
+            lockTex:SetVertexColor(0.85, 0.85, 0.85)  -- neutral when unlocked
+        end
+        lockTex:SetTexCoord(0, 1, 0, 1)
+    end
+    UpdateLockIcon()
+    f.UpdateLockIcon = UpdateLockIcon
+
+    lockBtn:SetScript("OnClick", function()
+        RR.db.frameLocked = not RR.db.frameLocked
+        UpdateLockIcon()
+    end)
+    -- Anchors GameTooltip to the right of the frame when the frame is on the
+    -- left half of the screen, and to the left otherwise. Switches instantly
+    -- at the midpoint so the tooltip never overlaps the frame.
+    local currentSide  -- "right" or "left" — tracked to avoid redundant re-anchors
+    local function ApplyTooltipSide(side)
+        GameTooltip:ClearAllPoints()
+        if side == "right" then
+            GameTooltip:SetPoint("TOPLEFT", f, "TOPRIGHT", 4, 0)
+        else
+            GameTooltip:SetPoint("TOPRIGHT", f, "TOPLEFT", -4, 0)
+        end
+        currentSide = side
+    end
+    local function DesiredSide()
+        local cx = f:GetCenter()
+        local sw = UIParent:GetWidth()
+        if cx and cx < sw / 2 then return "right" end
+        return "left"
+    end
+    local function AnchorTooltipBesideFrame()
+        GameTooltip:SetOwner(f, "ANCHOR_NONE")
+        ApplyTooltipSide(DesiredSide())
+    end
+    f.AnchorTooltipBesideFrame = AnchorTooltipBesideFrame
+
+    -- While the tooltip is owned by this frame (hover OR drag), re-evaluate
+    -- which side it should sit on every frame and flip instantly if the
+    -- frame's center crosses the screen midpoint.
+    f:HookScript("OnUpdate", function()
+        if GameTooltip:GetOwner() ~= f then return end
+        local side = DesiredSide()
+        if side ~= currentSide then
+            ApplyTooltipSide(side)
+        end
+    end)
+
+    lockBtn:SetScript("OnEnter", function(self)
+        lockBtn:Show()  -- keep visible while cursor is on the button itself
+        AnchorTooltipBesideFrame()
+        GameTooltip:AddLine(RR.db.frameLocked and "Unlock frame" or "Lock frame",
+            1, 1, 1)
+        GameTooltip:Show()
+    end)
+    lockBtn:SetScript("OnLeave", function()
+        GameTooltip_Hide()
+        if not f:IsMouseOver() then lockBtn:Hide() end
     end)
 
     -- Rank icon.
@@ -78,14 +156,21 @@ local function CreateRankFrame()
     end)
 
     f:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        lockBtn:Show()
+        AnchorTooltipBesideFrame()
         GameTooltip:AddLine("RaiderRanked", 0, 0.8, 1)
         GameTooltip:AddLine("Left-click to show group ranks", 1, 1, 1)
-        GameTooltip:AddLine("Left-drag to move", 0.7, 0.7, 0.7)
+        GameTooltip:AddLine(RR.db.frameLocked and "Frame locked (click lock icon to unlock)"
+            or "Left-drag to move", 0.7, 0.7, 0.7)
         GameTooltip:AddLine("Right-click to hide  (/rr to show)", 0.7, 0.7, 0.7)
         GameTooltip:Show()
     end)
-    f:SetScript("OnLeave", GameTooltip_Hide)
+    f:SetScript("OnLeave", function(self)
+        GameTooltip_Hide()
+        if not self:IsMouseOver() and not lockBtn:IsMouseOver() then
+            lockBtn:Hide()
+        end
+    end)
 
     return f
 end

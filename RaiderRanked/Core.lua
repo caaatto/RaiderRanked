@@ -15,6 +15,7 @@ RR.DB_DEFAULTS = {
     showMinimap   = true,
     minimap       = { hide = false, minimapPos = 225 },  -- LibDBIcon settings
     framePosition = { point = "CENTER", x = 0, y = -200 },
+    frameLocked   = false,
     lastRankId    = nil,  -- DEPRECATED: migrated to per-char charRanks[key]
     -- PvP
     pvpThresholds     = nil,
