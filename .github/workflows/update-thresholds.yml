@@ -22,22 +22,27 @@ jobs:
       - run: pip install requests
 
       - name: Compute thresholds
+        env:
+          # Persist state across runs via a committed file so the
+          # population sanity guard works even though ./build is
+          # ephemeral in CI.
+          RR_STATE_PATH: scripts/state.json
         run: |
           mkdir -p build
           RR_OUTPUT_DIR=./build python3 scripts/update_thresholds.py
 
-      - name: Patch RankSystem.lua
+      - name: Patch addon Lua files
         run: python3 scripts/patch_addon.py RaiderRanked/RankSystem.lua build/thresholds.json
 
       - name: Check for changes
         id: diff
         run: |
-          if git diff --quiet RaiderRanked/RankSystem.lua; then
+          if git diff --quiet RaiderRanked/RankSystem.lua RaiderRanked/ScoreHistory.lua scripts/state.json; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "No threshold changes, skipping upload."
+            echo "No threshold or season changes, skipping upload."
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            git diff --stat RaiderRanked/RankSystem.lua
+            git diff --stat RaiderRanked/RankSystem.lua RaiderRanked/ScoreHistory.lua scripts/state.json
           fi
 
       - name: Commit updated thresholds
@@ -46,7 +51,7 @@ jobs:
         run: |
           git config user.name "Catto"
           git config user.email "info@catto.at"
-          git add RaiderRanked/RankSystem.lua
+          git add RaiderRanked/RankSystem.lua RaiderRanked/ScoreHistory.lua scripts/state.json
           git commit -m "update thresholds $(date -u +'%Y-%m-%d')"
           echo "hash=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
           echo "msg=$(git log -1 --format=%s)" >> "$GITHUB_OUTPUT"
