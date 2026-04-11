@@ -3,22 +3,26 @@
 
 local ADDON_NAME, RR = ...
 
--- Score thresholds based on 1,445,700 ranked players (TWW Season 2 distribution).
+-- Score thresholds (minScore / wingScore) below are auto-patched daily by
+-- .github/workflows/update-thresholds.yml from the current Raider.IO M+ rankings
+-- (EU, all classes/roles). Do not edit by hand — changes will be overwritten.
+--
 -- wingScore = midpoint of each bracket. Below midpoint → plain border (Boss-Gold).
 -- At or above midpoint → winged border (Boss-Gold-Winged).
 --
--- Rank         %ile range     Rio range     wingScore (midpoint)
--- Challenger   Top 0.1%       3252+         3252  (always winged)
--- Grandmaster  99.7–99.9%     3152–3251     3202
--- Master       99–99.7%       3032–3151     3092
--- Diamond      96–99%         2810–3031     2921
--- Emerald      92–96%         2701–2809     2755
--- Platinum     80–92%         2548–2700     2624
--- Gold         60–80%         2071–2547     2309
--- Silver       30–60%         890–2070      1480
--- Bronze       10–30%         303–889       596
--- Iron         0–10%          1–302         152
--- Unranked     0              0             —
+-- Percentile bands (season-invariant):
+--   Rank         Top %ile range
+--   Challenger   Top 0.1%        (always winged)
+--   Grandmaster  0.1–0.3%
+--   Master       0.3–1%
+--   Diamond      1–4%
+--   Emerald      4–8%
+--   Platinum     8–20%
+--   Gold         20–40%
+--   Silver       40–70%
+--   Bronze       70–90%
+--   Iron         90–100%
+--   Unranked     no score
 
 -- Ordered highest to lowest. GetRankForScore() returns the first match.
 local MEDIA = "Interface\\AddOns\\RaiderRanked\\Media\\"
