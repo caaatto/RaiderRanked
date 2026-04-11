@@ -8,11 +8,11 @@ public api dir) and in the caaatto/RaiderRanked GitHub Actions workflow
 (feeding the addon's CurseForge release pipeline). Both deployments
 share this exact file.
 
-Auto-detects the current main season from Raider.IO's static-data
-endpoint, falls back to the last known good season from state.json if
-the static-data call fails. Writes thresholds.json (consumed by the
-website and patched into the addon) and state.json (internal bookkeeping
-used by the population sanity guard).
+Auto-detects the current expansion and main season from Raider.IO's
+static-data endpoint, falls back to the last known good values from
+state.json if the static-data call fails. Writes thresholds.json
+(consumed by the website and patched into the addon) and state.json
+(internal bookkeeping used by the population sanity guard).
 """
 
 import json
@@ -29,7 +29,14 @@ import requests
 # script still tries to look up metadata for that slug from static-data
 # so seasonName/seasonStart can be populated.
 SEASON_OVERRIDE = os.getenv("RR_SEASON")
-EXPANSION_ID = int(os.getenv("RR_EXPANSION_ID", "11"))  # 11 = Midnight
+# RR_EXPANSION_ID pins to a specific Raider.IO expansion (10 = TWW,
+# 11 = Midnight, ...). When unset the script probes upward from
+# EXPANSION_BASELINE and picks the highest expansion with a started
+# main season for the configured region, so cross-expansion rollovers
+# do not require a code change.
+EXPANSION_OVERRIDE = int(os.getenv("RR_EXPANSION_ID")) if os.getenv("RR_EXPANSION_ID") else None
+EXPANSION_BASELINE = 11  # 11 = Midnight; lowest expansion auto-detect considers
+EXPANSION_PROBE_RANGE = 5  # probe IDs [BASELINE, BASELINE + RANGE)
 REGION = os.getenv("RR_REGION", "eu")
 OUTPUT_DIR = Path(os.getenv("RR_OUTPUT_DIR", "/var/www/catto.at/api/raiderranked"))
 # state.json defaults to next to thresholds.json. Override is useful in CI
@@ -66,16 +73,66 @@ TOP_100_POSITION = 99  # 0-indexed: position 99 = 100th player
 
 # --- Season resolution ----------------------------------------------------
 
-def fetch_seasons(session):
-    """Return the seasons list from Raider.IO static data for our expansion."""
+def fetch_seasons(session, expansion_id):
+    """Return the seasons list from Raider.IO static data for the given expansion."""
     time.sleep(REQUEST_DELAY)
     resp = session.get(
         f"{RIO_BASE}/v1/mythic-plus/static-data",
-        params={"expansion_id": EXPANSION_ID},
+        params={"expansion_id": expansion_id},
         timeout=30,
     )
     resp.raise_for_status()
     return resp.json().get("seasons", [])
+
+
+def detect_active_expansion(session, region, now_iso):
+    """Probe expansion IDs from EXPANSION_BASELINE upward, return
+    (expansion_id, seasons) for the expansion whose latest started
+    main_season is most recent in the region.
+
+    When the next expansion launches with its first main season, that
+    season's start timestamp will be more recent than any of the
+    previous expansion's, so this naturally promotes to the new
+    expansion ID without a code change. Until that first season
+    actually starts, the previous expansion still wins.
+
+    Stops probing after two consecutive misses (HTTP error or no
+    started main_seasons) so a brand-new expansion ID does not cause
+    runaway requests. Returns None if every probe came up empty;
+    callers should fall back to state.json or hard-error.
+    """
+    candidates = []  # (latest_start, expansion_id, seasons)
+    consecutive_misses = 0
+    for eid in range(EXPANSION_BASELINE, EXPANSION_BASELINE + EXPANSION_PROBE_RANGE):
+        try:
+            seasons = fetch_seasons(session, eid)
+        except Exception as e:
+            print(f"WARN: probe expansion_id={eid} failed: {e}", file=sys.stderr)
+            consecutive_misses += 1
+            if consecutive_misses >= 2:
+                break
+            continue
+
+        started = [
+            s for s in seasons
+            if s.get("is_main_season")
+            and s.get("starts", {}).get(region, "") <= now_iso
+        ]
+        if started:
+            latest_start = max(s["starts"][region] for s in started)
+            candidates.append((latest_start, eid, seasons))
+            consecutive_misses = 0
+        else:
+            consecutive_misses += 1
+            if consecutive_misses >= 2:
+                break
+
+    if not candidates:
+        return None
+
+    candidates.sort(reverse=True)
+    _, eid, seasons = candidates[0]
+    return eid, seasons
 
 
 def resolve_active_season(seasons, now_iso, region, slug_override=None):
@@ -243,7 +300,7 @@ def compute(client):
 
 # --- Output ---------------------------------------------------------------
 
-def write_json(season_meta, total, top100_score, thresholds):
+def write_json(season_meta, expansion_id, total, top100_score, thresholds):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUTPUT_DIR / "thresholds.json"
 
@@ -251,7 +308,7 @@ def write_json(season_meta, total, top100_score, thresholds):
         "season": season_meta["slug"],
         "seasonName": season_meta.get("name", season_meta["slug"]),
         "seasonStart": season_meta.get("starts", {}).get(REGION),
-        "expansionId": EXPANSION_ID,
+        "expansionId": expansion_id,
         "region": REGION,
         "updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "totalPlayers": total,
@@ -271,39 +328,65 @@ def write_json(season_meta, total, top100_score, thresholds):
 # --- Main -----------------------------------------------------------------
 
 def resolve_with_fallback(session, state, now_iso):
-    """Resolve the active season, with graceful degradation when the
-    static-data endpoint is unreachable. Returns a season_meta dict
-    that always has at least 'slug', and 'name'/'starts' if known.
+    """Resolve (season_meta, expansion_id) with graceful degradation
+    when the static-data endpoint is unreachable.
+
+    Two paths:
+      - EXPANSION_OVERRIDE set: single fetch against the pinned expansion.
+      - Otherwise: probe expansions starting at EXPANSION_BASELINE and
+        let detect_active_expansion pick the highest one with a started
+        main season for the region.
+
+    Falls back to SEASON_OVERRIDE or state.json on hard failure.
+    Returns (season_meta_dict, resolved_expansion_id).
     """
-    try:
-        seasons = fetch_seasons(session)
-    except Exception as e:
-        print(f"WARN: static-data fetch failed: {e}", file=sys.stderr)
-        seasons = None
+    seasons = None
+    expansion_id = None
+
+    if EXPANSION_OVERRIDE is not None:
+        try:
+            seasons = fetch_seasons(session, EXPANSION_OVERRIDE)
+            expansion_id = EXPANSION_OVERRIDE
+        except Exception as e:
+            print(f"WARN: static-data fetch failed: {e}", file=sys.stderr)
+    else:
+        try:
+            detected = detect_active_expansion(session, REGION, now_iso)
+        except Exception as e:
+            print(f"WARN: expansion auto-detect failed: {e}", file=sys.stderr)
+            detected = None
+        if detected is not None:
+            expansion_id, seasons = detected
 
     if seasons is not None:
         meta = resolve_active_season(seasons, now_iso, REGION, SEASON_OVERRIDE)
         if meta:
-            return meta
+            return meta, expansion_id
         print(
             f"WARN: no season resolved (override={SEASON_OVERRIDE!r}, "
-            f"region={REGION}, expansion={EXPANSION_ID})",
+            f"region={REGION}, expansion={expansion_id})",
             file=sys.stderr,
         )
 
-    # Fallbacks: explicit override > last known from state
+    # All fallbacks below pull the expansion ID from state.json so the
+    # written output stays internally consistent: the season slug we
+    # fall back to was originally computed against state's expansion,
+    # not whatever the user just tried to override to.
+    fallback_expansion = state.get("expansionId", EXPANSION_BASELINE)
+
     if SEASON_OVERRIDE:
         print(f"Falling back to override slug: {SEASON_OVERRIDE}", file=sys.stderr)
-        return {"slug": SEASON_OVERRIDE, "name": SEASON_OVERRIDE}
+        return {"slug": SEASON_OVERRIDE, "name": SEASON_OVERRIDE}, fallback_expansion
 
     if state.get("activeSeason"):
         slug = state["activeSeason"]
         print(f"Falling back to last known good season: {slug}", file=sys.stderr)
-        return {
+        meta = {
             "slug": slug,
             "name": state.get("seasonName", slug),
             "starts": {REGION: state.get("seasonStart")} if state.get("seasonStart") else {},
         }
+        return meta, fallback_expansion
 
     print("ERROR: no season resolvable and no fallback available", file=sys.stderr)
     sys.exit(1)
@@ -312,7 +395,11 @@ def resolve_with_fallback(session, state, now_iso):
 def main():
     print(f"--- RaiderRanked threshold update ---")
     print(f"{datetime.now(timezone.utc).isoformat()}")
-    print(f"Region: {REGION} | Expansion: {EXPANSION_ID} | Override: {SEASON_OVERRIDE or '(none)'}\n")
+    print(
+        f"Region: {REGION} | "
+        f"Expansion override: {EXPANSION_OVERRIDE if EXPANSION_OVERRIDE is not None else '(auto)'} | "
+        f"Season override: {SEASON_OVERRIDE or '(none)'}\n"
+    )
 
     session = requests.Session()
     session.headers["User-Agent"] = "RaiderRanked-Updater/1.0"
@@ -320,12 +407,16 @@ def main():
     state = read_state()
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    season_meta = resolve_with_fallback(session, state, now_iso)
+    season_meta, expansion_id = resolve_with_fallback(session, state, now_iso)
     active_season = season_meta["slug"]
 
+    last_expansion = state.get("expansionId")
+    if last_expansion and last_expansion != expansion_id:
+        print(f"*** Expansion promoted: {last_expansion} -> {expansion_id} ***")
     promoted = state.get("activeSeason") and state["activeSeason"] != active_season
     if promoted:
         print(f"*** Season promoted: {state['activeSeason']} -> {active_season} ***")
+    print(f"Active expansion: {expansion_id}")
     print(f"Active season: {active_season} ({season_meta.get('name', '?')})")
     print(f"Region start: {season_meta.get('starts', {}).get(REGION, '?')}\n")
 
@@ -350,11 +441,12 @@ def main():
         )
         sys.exit(2)
 
-    write_json(season_meta, total, top100_score, thresholds)
+    write_json(season_meta, expansion_id, total, top100_score, thresholds)
     write_state({
         "activeSeason": active_season,
         "seasonName": season_meta.get("name"),
         "seasonStart": season_meta.get("starts", {}).get(REGION),
+        "expansionId": expansion_id,
         "totalPlayers": total,
         "lastUpdated": now_iso,
     })
