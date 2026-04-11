@@ -61,7 +61,9 @@ PvP ratings for other players are acquired via addon messaging (instant, players
 
 ## Threshold Auto-Update
 
-A daily GitHub Actions workflow fetches the M+ score distribution from Raider.IO, computes percentile cutoffs, patches `RankSystem.lua`, and uploads the updated addon to CurseForge.
+A daily GitHub Actions workflow fetches the M+ score distribution from Raider.IO, computes percentile cutoffs, patches `RankSystem.lua` (rank score thresholds and Top 100 cutoff) and `ScoreHistory.lua` (the `SEASON_START` anchor), and uploads the updated addon to CurseForge.
+
+The active season is auto-detected from Raider.IO's `mythic-plus/static-data` endpoint on every run, so season rollovers do not require a code change: the next scheduled run picks up the new slug, the patcher rewrites the constants from the new `seasonStart`, and CI ships an updated build. A `state.json` next to `scripts/update_thresholds.py` tracks last-known-good population for a sanity guard that refuses to overwrite a healthy build with a half-empty Raider.IO snapshot. The script lives upstream in [caaatto/raiderranked-api](https://github.com/caaatto/raiderranked-api) and is mirrored byte-identical here.
 
 ### Setup (for maintainers)
 
