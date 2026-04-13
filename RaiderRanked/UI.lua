@@ -3,7 +3,7 @@
 
 local ADDON_NAME, RR = ...
 
-local FRAME_W, FRAME_H = 220, 90
+local FRAME_W, FRAME_H = 260, 90
 local ICON_SIZE         = 64
 local GROUP_ROW_H       = 32   -- height per group member row
 local GROUP_ICON_SIZE   = 28   -- emblem icon in group rows
@@ -281,11 +281,14 @@ local function CreateRankFrame()
     nameText:SetPoint("BOTTOMLEFT", icon, "RIGHT", 10, 2)
     nameText:SetPoint("RIGHT", f, "RIGHT", -10, 0)
     nameText:SetJustifyH("LEFT")
+    nameText:SetWordWrap(false)
     f.nameText = nameText
 
     local scoreText = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     scoreText:SetPoint("TOPLEFT", icon, "RIGHT", 10, -2)
+    scoreText:SetPoint("RIGHT", f, "RIGHT", -10, 0)
     scoreText:SetJustifyH("LEFT")
+    scoreText:SetWordWrap(false)
     f.scoreText = scoreText
 
     -- Left-click toggles group panel; right-click hides frame.
@@ -346,17 +349,18 @@ local function CreateGroupRow(parent, index)
     nameText:SetWordWrap(false)
     row.nameText = nameText
 
-    local rankText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    rankText:SetPoint("LEFT", nameText, "RIGHT", 4, 0)
-    rankText:SetWidth(70)
-    rankText:SetJustifyH("LEFT")
-    rankText:SetWordWrap(false)
-    row.rankText = rankText
-
     local scoreText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     scoreText:SetPoint("RIGHT", row, "RIGHT", 0, 0)
     scoreText:SetJustifyH("RIGHT")
+    scoreText:SetWidth(40)
     row.scoreText = scoreText
+
+    local rankText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    rankText:SetPoint("LEFT", nameText, "RIGHT", 4, 0)
+    rankText:SetPoint("RIGHT", scoreText, "LEFT", -6, 0)
+    rankText:SetJustifyH("LEFT")
+    rankText:SetWordWrap(false)
+    row.rankText = rankText
 
     return row
 end
@@ -577,11 +581,14 @@ local function CreatePvPRankFrame()
     nameText:SetPoint("BOTTOMLEFT", icon, "RIGHT", 10, 2)
     nameText:SetPoint("RIGHT", f, "RIGHT", -10, 0)
     nameText:SetJustifyH("LEFT")
+    nameText:SetWordWrap(false)
     f.nameText = nameText
 
     local scoreText = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     scoreText:SetPoint("TOPLEFT", icon, "RIGHT", 10, -2)
+    scoreText:SetPoint("RIGHT", f, "RIGHT", -10, 0)
     scoreText:SetJustifyH("LEFT")
+    scoreText:SetWordWrap(false)
     f.scoreText = scoreText
 
     f:SetScript("OnMouseUp", function(self, button)
