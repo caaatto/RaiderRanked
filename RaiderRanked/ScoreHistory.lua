@@ -10,7 +10,7 @@ local GRAPH_H          = 440
 local PLOT_PAD_LEFT    = 70
 local PLOT_PAD_BOTTOM  = 32
 local PLOT_PAD_TOP     = 14
-local PLOT_PAD_RIGHT   = 50
+local PLOT_PAD_RIGHT   = 90
 local MAX_VISIBLE_PTS  = 100
 local LINE_THICKNESS   = 2
 local DOT_SIZE         = 6
@@ -222,14 +222,16 @@ local plotArea
 local charToggleArea  -- frame holding character toggle buttons
 
 -- Object pools
-local bandPool   = {}
-local fillPool   = {}
-local linePool   = {}
-local dotPool    = {}
-local dotFrames  = {}
-local labelPool  = {}
-local gridPool   = {}
-local togglePool = {}
+local bandPool    = {}
+local fillPool    = {}
+local linePool    = {}
+local smoothPool  = {}  -- CreateLine-based smooth line segments
+local glowPool    = {}  -- CreateLine-based glow (thicker, translucent)
+local dotPool     = {}
+local dotFrames   = {}
+local labelPool   = {}
+local gridPool    = {}
+local togglePool  = {}
 
 local function AcquireTexture(pool, parent, layer, sublevel)
     for _, tex in ipairs(pool) do
@@ -276,6 +278,23 @@ local function AcquireLabel(pool, parent)
     return fs
 end
 
+local function AcquireLine(pool, parent, layer, sublevel, thickness)
+    for _, ln in ipairs(pool) do
+        if not ln._inUse then
+            ln._inUse = true
+            ln:SetParent(parent)
+            ln:SetThickness(thickness or 2)
+            ln:Show()
+            return ln
+        end
+    end
+    local ln = parent:CreateLine(nil, layer or "ARTWORK", nil, sublevel or 0)
+    ln._inUse = true
+    ln:SetThickness(thickness or 2)
+    table.insert(pool, ln)
+    return ln
+end
+
 local function ReleasePool(pool)
     for _, obj in ipairs(pool) do
         obj._inUse = false
@@ -287,6 +306,8 @@ local function ReleaseAll()
     ReleasePool(bandPool)
     ReleasePool(fillPool)
     ReleasePool(linePool)
+    ReleasePool(smoothPool)
+    ReleasePool(glowPool)
     ReleasePool(dotPool)
     ReleasePool(dotFrames)
     ReleasePool(labelPool)
@@ -435,12 +456,20 @@ local function CreateHistoryFrame()
     f:SetSize(GRAPH_W, GRAPH_H)
     f:SetFrameStrata("HIGH")
     f:SetBackdrop({
-        bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
-        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-        tile = true, tileSize = 16, edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        bgFile   = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        tile = false, edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 },
     })
-    f:SetBackdropColor(0, 0, 0, 0.92)
+    f:SetBackdropColor(0.04, 0.05, 0.07, 0.97)
+    f:SetBackdropBorderColor(0.18, 0.22, 0.28, 1)
+
+    -- Top accent strip
+    local accent = f:CreateTexture(nil, "ARTWORK")
+    accent:SetPoint("TOPLEFT", f, "TOPLEFT", 1, -1)
+    accent:SetPoint("TOPRIGHT", f, "TOPRIGHT", -1, -1)
+    accent:SetHeight(2)
+    accent:SetColorTexture(0, 0.80, 1.00, 0.55)
 
     local pos = RR.db.historyPosition or { point = "CENTER", x = 0, y = 0 }
     f:SetPoint(pos.point, UIParent, pos.point, pos.x, pos.y)
@@ -456,12 +485,18 @@ local function CreateHistoryFrame()
 
     -- Title
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOP", f, "TOP", 0, -10)
+    title:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -10)
     title:SetText("|cff00ccffScore History|r")
 
     -- Close button
     local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
+
+    -- Delta header: "Score · Δ(range) · NextRank threshold Δ"
+    local deltaHeader = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    deltaHeader:SetPoint("TOP", f, "TOP", 0, -12)
+    deltaHeader:SetJustifyH("CENTER")
+    f.deltaHeader = deltaHeader
 
     -- Time range buttons
     local ranges = {
@@ -496,9 +531,47 @@ local function CreateHistoryFrame()
     charToggleArea:SetPoint("LEFT", prevBtn, "RIGHT", 12, 0)
     charToggleArea:SetPoint("RIGHT", f, "RIGHT", -30, 0)
 
+    -- Mode switcher (left gutter, vertical).
+    f.mode = (RR.db and RR.db.historyMode) or "score"
+    f.modeButtons = {}
+    local modes = {
+        { id = "score",    label = "Score"    },
+        { id = "progress", label = "Progress" },
+        { id = "cutoffs",  label = "Cutoffs"  },
+    }
+    for i, m in ipairs(modes) do
+        local b = CreateFrame("Button", nil, f)
+        b:SetSize(64, 20)
+        b:SetPoint("TOPLEFT", f, "TOPLEFT", 12 + (i - 1) * 68, -52)
+
+        local bg = b:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints(b)
+        b.bg = bg
+
+        local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("CENTER", b, "CENTER", 0, 0)
+        fs:SetText(m.label)
+        b.fs = fs
+
+        b:SetScript("OnClick", function()
+            f.mode = m.id
+            if RR.db then RR.db.historyMode = m.id end
+            RR:UpdateHistoryModeButtons()
+            RR:RefreshHistoryGraph()
+        end)
+        b:SetScript("OnEnter", function(self)
+            if f.mode ~= m.id then self.bg:SetColorTexture(1, 1, 1, 0.08) end
+        end)
+        b:SetScript("OnLeave", function(self)
+            if f.mode ~= m.id then self.bg:SetColorTexture(1, 1, 1, 0.03) end
+        end)
+        b.modeId = m.id
+        table.insert(f.modeButtons, b)
+    end
+
     -- Plot area
     plotArea = CreateFrame("Frame", nil, f)
-    plotArea:SetPoint("TOPLEFT", f, "TOPLEFT", PLOT_PAD_LEFT, -(PLOT_PAD_TOP + 52))
+    plotArea:SetPoint("TOPLEFT", f, "TOPLEFT", PLOT_PAD_LEFT, -(PLOT_PAD_TOP + 76))
     plotArea:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -PLOT_PAD_RIGHT, PLOT_PAD_BOTTOM)
 
 
@@ -525,14 +598,14 @@ local function DrawSoloChart(visData, MapX, MapY, rankColor)
         local x = MapX(d[1])
         local y = MapY(d[2])
 
-        -- Filled area columns between this point and the next.
+        -- Gradient area fill (fine column resolution for smoothness).
         if i < #visData then
             local nd = visData[i + 1]
             local nx = MapX(nd[1])
             local ny = MapY(nd[2])
             local segW = nx - x
-            local cols = math.max(1, math.floor(segW / 2))
-            if cols > 50 then cols = 50 end
+            local cols = math.max(1, math.floor(segW))
+            if cols > 400 then cols = 400 end
 
             for col = 0, cols - 1 do
                 local t0 = col / cols
@@ -548,15 +621,20 @@ local function DrawSoloChart(visData, MapX, MapY, rankColor)
                 fill:SetSize(colW + 0.5, math.max(1, colH))
                 fill:SetColorTexture(c.r, c.g, c.b, 1)
                 fill:SetGradient("VERTICAL",
-                    CreateColor(c.r * 0.08, c.g * 0.08, c.b * 0.08, 1),
-                    CreateColor(c.r * 0.55, c.g * 0.55, c.b * 0.55, 1))
-
-                local edge = AcquireTexture(linePool, plotArea, "ARTWORK", 1)
-                edge:ClearAllPoints()
-                edge:SetPoint("BOTTOMLEFT", plotArea, "BOTTOMLEFT", lx, colH - 1)
-                edge:SetSize(colW + 0.5, LINE_THICKNESS)
-                edge:SetColorTexture(c.r, c.g, c.b, 0.9)
+                    CreateColor(c.r * 0.05, c.g * 0.05, c.b * 0.05, 0.05),
+                    CreateColor(c.r * 0.65, c.g * 0.65, c.b * 0.70, 0.55))
             end
+
+            -- Smooth top edge with glow (CreateLine).
+            local glow = AcquireLine(glowPool, plotArea, "ARTWORK", 2, 6)
+            glow:SetStartPoint("BOTTOMLEFT", x, y)
+            glow:SetEndPoint("BOTTOMLEFT", nx, ny)
+            glow:SetColorTexture(c.r, c.g, c.b, 0.22)
+
+            local line = AcquireLine(smoothPool, plotArea, "ARTWORK", 3, 2.5)
+            line:SetStartPoint("BOTTOMLEFT", x, y)
+            line:SetEndPoint("BOTTOMLEFT", nx, ny)
+            line:SetColorTexture(c.r, c.g, c.b, 1)
         end
 
         -- Dot + tooltip.
@@ -606,29 +684,21 @@ local function DrawLineChart(visData, MapX, MapY, color, charName)
         local x = MapX(d[1])
         local y = MapY(d[2])
 
-        -- Line segment to next point.
+        -- Smooth line segment to next point.
         if i < #visData then
             local nd = visData[i + 1]
             local nx = MapX(nd[1])
             local ny = MapY(nd[2])
-            local segW = nx - x
-            local cols = math.max(1, math.floor(segW / 2))
-            if cols > 50 then cols = 50 end
 
-            for col = 0, cols - 1 do
-                local t0 = col / cols
-                local t1 = (col + 1) / cols
-                local lx = x + segW * t0
-                local colH = y + (ny - y) * ((t0 + t1) / 2)
-                local colW = segW / cols
-                if colW < 0.5 then colW = 0.5 end
+            local glow = AcquireLine(glowPool, plotArea, "ARTWORK", 2, 5)
+            glow:SetStartPoint("BOTTOMLEFT", x, y)
+            glow:SetEndPoint("BOTTOMLEFT", nx, ny)
+            glow:SetColorTexture(c.r, c.g, c.b, 0.20)
 
-                local edge = AcquireTexture(linePool, plotArea, "ARTWORK", 1)
-                edge:ClearAllPoints()
-                edge:SetPoint("BOTTOMLEFT", plotArea, "BOTTOMLEFT", lx, colH - 1)
-                edge:SetSize(colW + 0.5, LINE_THICKNESS + 1)
-                edge:SetColorTexture(c.r, c.g, c.b, 0.9)
-            end
+            local line = AcquireLine(smoothPool, plotArea, "ARTWORK", 3, 2.25)
+            line:SetStartPoint("BOTTOMLEFT", x, y)
+            line:SetEndPoint("BOTTOMLEFT", nx, ny)
+            line:SetColorTexture(c.r, c.g, c.b, 1)
         end
 
         -- Dot + tooltip.
@@ -675,9 +745,91 @@ local function DrawLineChart(visData, MapX, MapY, color, charName)
     end
 end
 
+-- Populates the delta header with "Score · Δscore (range) · NextRank threshold Δ".
+-- Reveals "pure" progress vs. moving goalposts: if your score rose 100 but the
+-- next threshold moved 80, you only gained 20 of actual ground.
+local function UpdateDeltaHeader(self)
+    local header = self.historyFrame and self.historyFrame.deltaHeader
+    if not header then return end
+
+    local key = CharKey()
+    local history = key and self.db.charHistory and self.db.charHistory[key]
+    if not history or #history < 2 then
+        header:SetText("")
+        return
+    end
+
+    local rangeDays = self.historyFrame.activeRange or 0
+    local cutoff = rangeDays > 0 and (time() - rangeDays * 86400) or SEASON_START
+
+    local currentScore = history[#history][2]
+    local currentRank  = self:GetRankForScore(currentScore)
+    local nextRank     = self:GetNextRank(currentRank)
+
+    -- First entry at or after cutoff. If nothing in range (player idle), use
+    -- the latest entry — delta vs. self = 0, which matches reality.
+    local pastIdx = #history
+    for i = 1, #history do
+        if history[i][1] >= cutoff then
+            pastIdx = i
+            break
+        end
+    end
+    local pastScore = history[pastIdx][2]
+    local pastThresholds = GetThresholdsAtIndex(history, pastIdx)
+
+    local scoreDelta = currentScore - pastScore
+    local rangeLabel = rangeDays > 0 and (rangeDays .. "d") or "Season"
+
+    local function sign(n) return (n >= 0 and "+" or "") .. n end
+
+    local parts = {
+        string.format("|cffffffff%d|r", currentScore),
+        string.format("|cff%s%s|r (%s)",
+            scoreDelta >= 0 and "66ff66" or "ff6666",
+            sign(scoreDelta), rangeLabel),
+    }
+
+    if nextRank then
+        local needed = nextRank.minScore - currentScore
+        local short = RR.RANK_SHORT[nextRank.id] or nextRank.name
+        if needed > 0 then
+            table.insert(parts, string.format("|cffaaaaaanext|r |cff%02x%02x%02x%s|r %d",
+                math.floor(nextRank.color.r*255),
+                math.floor(nextRank.color.g*255),
+                math.floor(nextRank.color.b*255),
+                short, needed))
+        end
+        if pastThresholds[nextRank.id] then
+            local tDelta = nextRank.minScore - pastThresholds[nextRank.id]
+            if tDelta ~= 0 then
+                table.insert(parts, string.format("|cff888888cutoff %s|r", sign(tDelta)))
+            end
+        end
+    end
+
+    header:SetText(table.concat(parts, "  ·  "))
+end
+
+function RR:UpdateHistoryModeButtons()
+    local f = self.historyFrame
+    if not f or not f.modeButtons then return end
+    for _, b in ipairs(f.modeButtons) do
+        if b.modeId == f.mode then
+            b.bg:SetColorTexture(0, 0.80, 1.00, 0.28)
+            b.fs:SetTextColor(1, 1, 1)
+        else
+            b.bg:SetColorTexture(1, 1, 1, 0.03)
+            b.fs:SetTextColor(0.65, 0.65, 0.70)
+        end
+    end
+end
+
 function RR:RefreshHistoryGraph()
     if not self.historyFrame or not plotArea then return end
     if self.historyFrame.emptyText then self.historyFrame.emptyText:Hide() end
+    self:UpdateHistoryModeButtons()
+    UpdateDeltaHeader(self)
 
     ReleaseAll()
     BuildCharDropdown()
@@ -698,7 +850,7 @@ function RR:RefreshHistoryGraph()
         end
     end
 
-    if #allCharData == 0 then
+    if #allCharData == 0 and self.historyFrame.mode ~= "cutoffs" then
         if not self.historyFrame.emptyText then
             self.historyFrame.emptyText = self.historyFrame:CreateFontString(
                 nil, "OVERLAY", "GameFontNormal")
@@ -711,7 +863,7 @@ function RR:RefreshHistoryGraph()
 
     -- Filter by time range and collect all data for Y/X bounds.
     local rangeDays = self.historyFrame.activeRange or 0
-    local cutoff = rangeDays > 0 and (time() - rangeDays * 86400) or 0
+    local cutoff = rangeDays > 0 and (time() - rangeDays * 86400) or SEASON_START
 
     local globalMinScore, globalMaxScore = math.huge, -math.huge
     local globalMinTime, globalMaxTime   = math.huge, -math.huge
@@ -750,7 +902,10 @@ function RR:RefreshHistoryGraph()
         end
     end
 
-    if #charDataSets == 0 then
+    local isCutoffsMode  = self.historyFrame.mode == "cutoffs"
+    local isProgressMode = self.historyFrame.mode == "progress"
+
+    if #charDataSets == 0 and not isCutoffsMode then
         if not self.historyFrame.emptyText then
             self.historyFrame.emptyText = self.historyFrame:CreateFontString(
                 nil, "OVERLAY", "GameFontNormal")
@@ -764,18 +919,175 @@ function RR:RefreshHistoryGraph()
     -- Get current thresholds for rank bands.
     local currentThresholds = self.db.thresholds or {}
 
-    -- Include visible rank boundaries in Y range.
-    for _, rank in ipairs(self.RANKS) do
-        local t = currentThresholds[rank.id] or rank.minScore
-        if t > 0 and t >= globalMinScore - 200 and t <= globalMaxScore + 200 then
-            if t < globalMinScore then globalMinScore = t end
-            if t > globalMaxScore then globalMaxScore = t end
-        end
-    end
+    if isProgressMode then
+        -- "Real progression": each point is (score gained) − (next-rank cutoff
+        -- movement) since range start. Zero = treading water.
+        local key = CharKey()
+        local history = key and self.db.charHistory and self.db.charHistory[key]
 
-    local yPad = math.max(50, (globalMaxScore - globalMinScore) * 0.08)
-    globalMinScore = math.max(0, globalMinScore - yPad)
-    globalMaxScore = globalMaxScore + yPad
+        local entries = {}
+        if history then
+            for i, e in ipairs(history) do
+                if e[1] >= cutoff then
+                    table.insert(entries, { e[1], e[2], GetThresholdsAtIndex(history, i) })
+                end
+            end
+            for i = #history, 1, -1 do
+                if history[i][1] < cutoff then
+                    table.insert(entries, 1, {
+                        cutoff, history[i][2], GetThresholdsAtIndex(history, i)
+                    })
+                    break
+                end
+            end
+        end
+
+        local refRank
+        if #entries >= 1 then
+            local last = entries[#entries]
+            local curRank = self:GetRankForScore(last[2])
+            refRank = self:GetNextRank(curRank) or curRank
+        end
+
+        charDataSets = {}
+        if #entries >= 2 and refRank then
+            local score0  = entries[1][2]
+            local cutoff0 = (entries[1][3] and entries[1][3][refRank.id]) or refRank.minScore
+            local series = {}
+            for _, e in ipairs(entries) do
+                local c = (e[3] and e[3][refRank.id]) or refRank.minScore
+                local progress = (e[2] - score0) - (c - cutoff0)
+                table.insert(series, { e[1], progress, nil, key })
+            end
+            table.insert(charDataSets, {
+                key = key, data = series, isCurrent = true,
+                color = refRank.color, refRank = refRank,
+            })
+        end
+
+        if #charDataSets == 0 then
+            if not self.historyFrame.emptyText then
+                self.historyFrame.emptyText = self.historyFrame:CreateFontString(
+                    nil, "OVERLAY", "GameFontNormal")
+                self.historyFrame.emptyText:SetPoint("CENTER", self.historyFrame, "CENTER", 0, 0)
+            end
+            self.historyFrame.emptyText:SetText("|cff888888Not enough data in this range.|r")
+            self.historyFrame.emptyText:Show()
+            return
+        end
+
+        globalMinScore, globalMaxScore = math.huge, -math.huge
+        globalMinTime,  globalMaxTime  = math.huge, -math.huge
+        for _, d in ipairs(charDataSets[1].data) do
+            if d[2] < globalMinScore then globalMinScore = d[2] end
+            if d[2] > globalMaxScore then globalMaxScore = d[2] end
+            if d[1] < globalMinTime  then globalMinTime  = d[1] end
+            if d[1] > globalMaxTime  then globalMaxTime  = d[1] end
+        end
+        local maxAbs = math.max(math.abs(globalMinScore), math.abs(globalMaxScore), 10)
+        globalMinScore, globalMaxScore = -maxAbs * 1.15, maxAbs * 1.15
+    elseif isCutoffsMode then
+        -- Build one series per rank from the threshold snapshots embedded in
+        -- the current char's history entries. entry[3] is set only when
+        -- thresholds actually changed (see RecordScoreSnapshot), so we get one
+        -- point per genuine cutoff movement.
+        local key = CharKey()
+        local history = key and self.db.charHistory and self.db.charHistory[key]
+
+        local events = {}
+        if history then
+            for _, entry in ipairs(history) do
+                if entry[3] then
+                    table.insert(events, { entry[1], entry[3] })
+                end
+            end
+        end
+
+        -- Range filter + context point before cutoff.
+        local ev_cutoff = rangeDays > 0 and (time() - rangeDays * 86400) or SEASON_START
+        local filtered = {}
+        local lastBefore
+        for _, ev in ipairs(events) do
+            if ev[1] >= ev_cutoff then
+                table.insert(filtered, ev)
+            else
+                lastBefore = ev
+            end
+        end
+        if lastBefore then
+            table.insert(filtered, 1, { ev_cutoff, lastBefore[2] })
+        end
+
+        charDataSets = {}
+        if #filtered >= 2 then
+            for _, rank in ipairs(self.RANKS) do
+                if rank.minScore > 0 and rank.id ~= "UNRANKED" then
+                    local series = {}
+                    for _, ev in ipairs(filtered) do
+                        local v = ev[2][rank.id]
+                        if v then
+                            table.insert(series, { ev[1], v, nil, rank.id })
+                        end
+                    end
+                    -- Extend to "now" so the latest value reaches the right edge.
+                    if #series >= 1 then
+                        local last = series[#series]
+                        if last[1] < time() then
+                            table.insert(series, { time(), last[2], nil, rank.id })
+                        end
+                    end
+                    if #series >= 2 then
+                        table.insert(charDataSets, {
+                            key = rank.id,
+                            data = series,
+                            color = rank.color,
+                            isCurrent = false,
+                            rankRef = rank,
+                        })
+                    end
+                end
+            end
+        end
+
+        if #charDataSets == 0 then
+            if not self.historyFrame.emptyText then
+                self.historyFrame.emptyText = self.historyFrame:CreateFontString(
+                    nil, "OVERLAY", "GameFontNormal")
+                self.historyFrame.emptyText:SetPoint("CENTER", self.historyFrame, "CENTER", 0, 0)
+            end
+            self.historyFrame.emptyText:SetText("|cff888888No cutoff changes recorded in this range.|r")
+            self.historyFrame.emptyText:Show()
+            return
+        end
+
+        -- Recompute bounds from cutoff data.
+        globalMinScore, globalMaxScore = math.huge, -math.huge
+        globalMinTime,  globalMaxTime  = math.huge, -math.huge
+        for _, cds in ipairs(charDataSets) do
+            for _, d in ipairs(cds.data) do
+                if d[2] < globalMinScore then globalMinScore = d[2] end
+                if d[2] > globalMaxScore then globalMaxScore = d[2] end
+                if d[1] < globalMinTime  then globalMinTime  = d[1] end
+                if d[1] > globalMaxTime  then globalMaxTime  = d[1] end
+            end
+        end
+        local yPad = math.max(15, (globalMaxScore - globalMinScore) * 0.15)
+        globalMinScore = globalMinScore - yPad
+        globalMaxScore = globalMaxScore + yPad
+    else
+        -- Include visible rank boundaries in Y range.
+        for _, rank in ipairs(self.RANKS) do
+            local t = currentThresholds[rank.id] or rank.minScore
+            if t > 0 and t >= globalMinScore - 200 and t <= globalMaxScore + 200 then
+                if t < globalMinScore then globalMinScore = t end
+                if t > globalMaxScore then globalMaxScore = t end
+            end
+        end
+
+        local yPad = math.max(50, (globalMaxScore - globalMinScore) * 0.08)
+        globalMinScore = math.max(0, globalMinScore - yPad)
+        globalMaxScore = globalMaxScore + yPad
+    end
 
     local plotW = plotArea:GetWidth()
     local plotH = plotArea:GetHeight()
@@ -790,7 +1102,6 @@ function RR:RefreshHistoryGraph()
         return ((s - globalMinScore) / (globalMaxScore - globalMinScore)) * plotH
     end
 
-    -- ── Rank bands ──────────────────────────────────────────────────────────
     local sortedRanks = {}
     for _, rank in ipairs(self.RANKS) do
         if rank.id ~= "UNRANKED" then
@@ -799,7 +1110,23 @@ function RR:RefreshHistoryGraph()
     end
     table.sort(sortedRanks, function(a, b) return a.minScore < b.minScore end)
 
+    -- Zero baseline for progress mode.
+    if isProgressMode then
+        local yZero = MapY(0)
+        local zero = AcquireTexture(gridPool, plotArea, "BACKGROUND", 2)
+        zero:ClearAllPoints()
+        zero:SetPoint("BOTTOMLEFT", plotArea, "BOTTOMLEFT", 0, yZero)
+        zero:SetSize(plotW, 1)
+        zero:SetColorTexture(1, 1, 1, 0.35)
+        local zeroLbl = AcquireLabel(labelPool, self.historyFrame)
+        zeroLbl:ClearAllPoints()
+        zeroLbl:SetPoint("LEFT", plotArea, "BOTTOMRIGHT", 4, yZero)
+        zeroLbl:SetText("|cffaaaaaa±0|r")
+        zeroLbl:SetJustifyH("LEFT")
+    end
+
     for i, rank in ipairs(sortedRanks) do
+        if isCutoffsMode or isProgressMode then break end
         local lo = currentThresholds[rank.id] or rank.minScore
         local hi
         if i < #sortedRanks then
@@ -811,24 +1138,37 @@ function RR:RefreshHistoryGraph()
         local yBottom = MapY(math.max(lo, globalMinScore))
         local yTop    = MapY(math.min(hi, globalMaxScore))
         if yTop > yBottom then
+            local c = rank.color
+
+            -- Colored band (subtle, so modern line stays readable).
             local band = AcquireTexture(bandPool, plotArea, "BACKGROUND", 0)
             band:ClearAllPoints()
             band:SetPoint("BOTTOMLEFT", plotArea, "BOTTOMLEFT", 0, yBottom)
             band:SetPoint("TOPRIGHT", plotArea, "BOTTOMRIGHT", 0, yTop)
-            local c = rank.color
-            band:SetColorTexture(c.r, c.g, c.b, 0.20)
+            band:SetColorTexture(c.r, c.g, c.b, 0.10)
 
-            local midY = yBottom + (yTop - yBottom) / 2
-            local lbl = AcquireLabel(labelPool, self.historyFrame)
-            lbl:ClearAllPoints()
-            lbl:SetPoint("RIGHT", plotArea, "BOTTOMLEFT", -4, midY)
-            local shortName = RANK_SHORT[rank.id] or rank.name
-            lbl:SetText(string.format("|cff%02x%02x%02x%s %d|r",
-                math.floor(c.r*255), math.floor(c.g*255), math.floor(c.b*255),
-                shortName, lo))
-            lbl:SetJustifyH("RIGHT")
+            -- Crisp threshold line at the band's lower edge.
+            if lo >= globalMinScore then
+                local grid = AcquireTexture(gridPool, plotArea, "BACKGROUND", 2)
+                grid:ClearAllPoints()
+                grid:SetPoint("BOTTOMLEFT", plotArea, "BOTTOMLEFT", 0, yBottom)
+                grid:SetSize(plotW, 1)
+                grid:SetColorTexture(c.r, c.g, c.b, 0.35)
+            end
 
-            -- (threshold lines removed — only bands + left labels)
+            -- Left-side rank label at the threshold (current-score label lives
+            -- on the right, so separating them avoids overlap when the player
+            -- sits near a cutoff).
+            if lo >= globalMinScore and lo <= globalMaxScore then
+                local lbl = AcquireLabel(labelPool, self.historyFrame)
+                lbl:ClearAllPoints()
+                lbl:SetPoint("RIGHT", plotArea, "BOTTOMLEFT", -4, yBottom)
+                local shortName = RANK_SHORT[rank.id] or rank.name
+                lbl:SetText(string.format("|cff%02x%02x%02x%s %d|r",
+                    math.floor(c.r*255), math.floor(c.g*255), math.floor(c.b*255),
+                    shortName, lo))
+                lbl:SetJustifyH("RIGHT")
+            end
         end
     end
 
@@ -865,7 +1205,13 @@ function RR:RefreshHistoryGraph()
     for _, cds in ipairs(charDataSets) do
         local visData = LTTB(cds.data, MAX_VISIBLE_PTS)
 
-        if not isCompare then
+        if isCutoffsMode then
+            -- Each dataset is a rank's cutoff series, coloured by that rank.
+            DrawLineChart(visData, MapX, MapY, cds.color,
+                RANK_SHORT[cds.key] or cds.key)
+        elseif isProgressMode then
+            DrawLineChart(visData, MapX, MapY, cds.color, nil)
+        elseif not isCompare then
             -- Solo: filled area chart in current rank colour.
             local lastScore = cds.data[#cds.data][2]
             local rank = self:GetRankForScore(lastScore)
@@ -885,19 +1231,55 @@ function RR:RefreshHistoryGraph()
         end
     end
 
-    -- ── Current score indicator ─────────────────────────────────────────────
-    for _, cds in ipairs(charDataSets) do
-        if cds.isCurrent and #cds.data > 0 then
-            local lastEntry = cds.data[#cds.data]
-            local cy = MapY(lastEntry[2])
+    -- Right-side legend for cutoffs mode: show the latest cutoff value per rank.
+    if isCutoffsMode then
+        for _, cds in ipairs(charDataSets) do
+            local last = cds.data[#cds.data]
+            local yy = MapY(last[2])
+            local c = cds.color
             local lbl = AcquireLabel(labelPool, self.historyFrame)
             lbl:ClearAllPoints()
-            lbl:SetPoint("LEFT", plotArea, "BOTTOMRIGHT", 4, cy)
-            local rank = self:GetRankForScore(lastEntry[2])
-            local c = rank.color
-            lbl:SetText(string.format("|cff%02x%02x%02x%.0f|r",
+            lbl:SetPoint("LEFT", plotArea, "BOTTOMRIGHT", 4, yy)
+            local short = RANK_SHORT[cds.key] or cds.key
+            lbl:SetText(string.format("|cff%02x%02x%02x%s|r |cff777777%d|r",
                 math.floor(c.r*255), math.floor(c.g*255), math.floor(c.b*255),
-                lastEntry[2]))
+                short, last[2]))
+            lbl:SetJustifyH("LEFT")
+        end
+    end
+
+    -- Progress mode: legend with latest real delta.
+    if isProgressMode then
+        local cds = charDataSets[1]
+        local last = cds.data[#cds.data]
+        local yy = MapY(last[2])
+        local c = cds.color
+        local val = math.floor(last[2] + 0.5)
+        local col = val >= 0 and "66cc66" or "cc6666"
+        local lbl = AcquireLabel(labelPool, self.historyFrame)
+        lbl:ClearAllPoints()
+        lbl:SetPoint("LEFT", plotArea, "BOTTOMRIGHT", 4, yy)
+        lbl:SetText(string.format("|cff%02x%02x%02x%s|r |cff%s%+d|r",
+            math.floor(c.r*255), math.floor(c.g*255), math.floor(c.b*255),
+            RANK_SHORT[cds.refRank.id] or cds.refRank.name, col, val))
+        lbl:SetJustifyH("LEFT")
+    end
+
+    -- ── Current score indicator (score mode only) ──────────────────────────
+    if not isCutoffsMode and not isProgressMode then
+        for _, cds in ipairs(charDataSets) do
+            if cds.isCurrent and #cds.data > 0 then
+                local lastEntry = cds.data[#cds.data]
+                local cy = MapY(lastEntry[2])
+                local lbl = AcquireLabel(labelPool, self.historyFrame)
+                lbl:ClearAllPoints()
+                lbl:SetPoint("LEFT", plotArea, "BOTTOMRIGHT", 4, cy)
+                local rank = self:GetRankForScore(lastEntry[2])
+                local c = rank.color
+                lbl:SetText(string.format("|cff%02x%02x%02x%.0f|r",
+                    math.floor(c.r*255), math.floor(c.g*255), math.floor(c.b*255),
+                    lastEntry[2]))
+            end
         end
     end
 end
