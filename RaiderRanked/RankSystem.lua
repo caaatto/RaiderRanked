@@ -227,12 +227,26 @@ end
 ---@param rank table
 ---@param score number|nil
 ---@return string
-function RR:GetRankDisplayName(rank, score)
+RR.RANK_SHORT = {
+    CHALLENGER  = "CH",
+    GRANDMASTER = "GM",
+    MASTER      = "MA",
+    DIAMOND     = "DIA",
+    EMERALD     = "EM",
+    PLATINUM    = "PL",
+    GOLD        = "GO",
+    SILVER      = "SI",
+    BRONZE      = "BR",
+    IRON        = "IR",
+}
+
+function RR:GetRankDisplayName(rank, score, short)
+    local name = short and (RR.RANK_SHORT[rank.id] or rank.name) or rank.name
     if rank.wingScore and score and score >= rank.wingScore
        and rank.id ~= "CHALLENGER" then
-        return rank.name .. " +"
+        return name .. " +"
     end
-    return rank.name
+    return name
 end
 
 --- Returns a colour-formatted rank name string.

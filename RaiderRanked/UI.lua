@@ -430,7 +430,7 @@ function RR:RefreshGroupPanel()
         row.icon:SetTexture(m.rank.icon)
         row.nameText:SetText(m.name)
         row.nameText:SetTextColor(1, 1, 1)
-        row.rankText:SetText(self:GetRankDisplayName(m.rank, m.score))
+        row.rankText:SetText(self:GetRankDisplayName(m.rank, m.score, true))
         row.rankText:SetTextColor(c.r, c.g, c.b)
 
         local sc = (RaiderIO and RaiderIO.GetScoreColor)
