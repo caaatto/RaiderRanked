@@ -208,6 +208,18 @@ for _, rank in ipairs(RR.RANKS) do
     RR.RANK_SCORE_DEFAULTS[rank.id] = rank.minScore
 end
 
+--- Returns the next-higher rank above the given one, or nil if already at the top.
+---@param rank table
+---@return table|nil
+function RR:GetNextRank(rank)
+    for i, r in ipairs(self.RANKS) do
+        if r.id == rank.id then
+            return self.RANKS[i - 1]
+        end
+    end
+    return nil
+end
+
 --- Returns the rank table for the given Raider.io score.
 ---@param score number|nil  Raider.io M+ overall score (nil treated as 0).
 ---@return table rank
