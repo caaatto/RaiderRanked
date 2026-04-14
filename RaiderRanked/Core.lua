@@ -404,8 +404,8 @@ function RR:HandleSlashCommand(msg)
     elseif msg == "ranks" then
         print("|cff00ccffRaiderRanked|r Current M+ thresholds:")
         for _, rank in ipairs(self.RANKS) do
-            print(string.format("  %s  %s: %d+",
-                self:FormatRankName(rank), rank.id, rank.minScore))
+            print(string.format("  %s: %d+",
+                self:FormatRankName(rank), rank.minScore))
         end
 
     elseif msg == "history" then
@@ -426,8 +426,8 @@ function RR:HandleSlashCommand(msg)
     elseif msg == "pvpranks" then
         print("|cff00ccffRaiderRanked|r Current PvP thresholds:")
         for _, rank in ipairs(self.PVP_RANKS) do
-            print(string.format("  %s  %s: %d+",
-                self:FormatPvPRankName(rank), rank.id, rank.minCR))
+            print(string.format("  %s: %d+",
+                self:FormatPvPRankName(rank), rank.minCR))
         end
 
     elseif msg == "pvpdebug" then
