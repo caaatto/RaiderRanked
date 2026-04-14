@@ -15,19 +15,8 @@ local MAX_VISIBLE_PTS  = 100
 local LINE_THICKNESS   = 2
 local DOT_SIZE         = 6
 
--- Abbreviated rank names for the Y-axis labels.
-local RANK_SHORT = {
-    CHALLENGER  = "CH",
-    GRANDMASTER = "GM",
-    MASTER      = "MA",
-    DIAMOND     = "DIA",
-    EMERALD     = "EM",
-    PLATINUM    = "PL",
-    GOLD        = "GO",
-    SILVER      = "SI",
-    BRONZE      = "BR",
-    IRON        = "IR",
-}
+-- Abbreviated rank names for the Y-axis labels (shared with RankSystem).
+local RANK_SHORT = RR.RANK_SHORT
 
 -- Distinct colours for alt characters (current char always uses rank colour).
 local ALT_COLORS = {
