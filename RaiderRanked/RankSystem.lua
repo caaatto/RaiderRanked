@@ -3,9 +3,13 @@
 
 local ADDON_NAME, RR = ...
 
--- Score thresholds (minScore / wingScore) below are auto-patched daily by
--- .github/workflows/update-thresholds.yml from the current Raider.IO M+ rankings
--- (EU, all classes/roles). Do not edit by hand — changes will be overwritten.
+-- Score thresholds (minScore / wingScore) below are seed values only. The
+-- active values are loaded from Cutoffs.lua at login via
+-- RR:ApplyCutoffSelection(), driven by the region/faction dropdowns in
+-- the Settings panel (stored in db.cutoffRegion / db.cutoffFaction).
+-- Cutoffs.lua is auto-patched daily from Raider.IO rankings. Do not edit
+-- the seed values below by hand — they are only a fallback for the first
+-- frame before Cutoffs.lua has been consulted.
 --
 -- wingScore = midpoint of each bracket. Below midpoint → plain border (Boss-Gold).
 -- At or above midpoint → winged border (Boss-Gold-Winged).
@@ -200,9 +204,9 @@ function RR:IsTop100(score)
     return score and score >= self.TOP_100_SCORE
 end
 
--- Snapshot of original code-defined thresholds, captured before any SavedVariables
--- override can mutate RR.RANKS. GetDefaultThresholds() reads from here so that
--- /rr reset always restores the values from this file, not from a mutated RANKS table.
+-- Fallback snapshot of file-load minScore values, used only when Cutoffs.lua
+-- or db.cutoffRegion/Faction are not yet available (first frame, tests).
+-- For normal operation GetDefaultThresholds() reads from RR.CUTOFFS.
 RR.RANK_SCORE_DEFAULTS = {}
 for _, rank in ipairs(RR.RANKS) do
     RR.RANK_SCORE_DEFAULTS[rank.id] = rank.minScore
@@ -275,15 +279,46 @@ function RR:FormatRankName(rank, score)
         name)
 end
 
---- Returns the default score thresholds as a copy (used for DB initialisation and /rr reset).
---- Reads from RANK_SCORE_DEFAULTS (snapshot taken at file-load time) so that
---- SavedVariables overrides to RANKS.minScore don't corrupt the reset baseline.
+--- Returns the active minScore defaults (used for DB initialisation and /rr reset).
+--- Reads from RR.CUTOFFS for the current db.cutoffRegion / db.cutoffFaction; falls
+--- back to the file-load snapshot if Cutoffs.lua or db isn't ready yet.
 function RR:GetDefaultThresholds()
+    local region  = self.db and self.db.cutoffRegion  or "eu"
+    local faction = self.db and self.db.cutoffFaction or "all"
+    local set = self.CUTOFFS and self:GetCutoffSet(region, faction) or nil
     local t = {}
-    for id, score in pairs(self.RANK_SCORE_DEFAULTS) do
-        t[id] = score
+    if set then
+        for id, _ in pairs(self.RANK_SCORE_DEFAULTS) do
+            local entry = set[id]
+            t[id] = (entry and entry.minScore) or self.RANK_SCORE_DEFAULTS[id]
+        end
+    else
+        for id, score in pairs(self.RANK_SCORE_DEFAULTS) do
+            t[id] = score
+        end
     end
     return t
+end
+
+--- Applies the wingScore and TOP_100_SCORE values from the selected cutoff
+--- set to RR.RANKS and RR.TOP_100_SCORE. minScore is not touched here —
+--- that goes through ApplyThresholds so user overrides (/rr set) are
+--- preserved. Call this whenever db.cutoffRegion / db.cutoffFaction
+--- changes, followed by ApplyThresholds(db.thresholds).
+function RR:ApplyCutoffSelection()
+    local region  = (self.db and self.db.cutoffRegion)  or "eu"
+    local faction = (self.db and self.db.cutoffFaction) or "all"
+    local set = self:GetCutoffSet(region, faction)
+    if not set then return end
+    for _, rank in ipairs(self.RANKS) do
+        local entry = set[rank.id]
+        if entry and entry.wingScore then
+            rank.wingScore = entry.wingScore
+        end
+    end
+    if set.top100Score then
+        self.TOP_100_SCORE = set.top100Score
+    end
 end
 
 --- Applies saved threshold overrides from the database.

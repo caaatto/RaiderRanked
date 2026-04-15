@@ -1,18 +1,45 @@
 #!/usr/bin/env python3
 """
-Fetch M+ score distribution from Raider.IO and compute
-percentile-based rank thresholds for RaiderRanked.
+Fetch M+ score distributions from Raider.IO for every
+(region × faction) combination and compute percentile-based rank
+thresholds per combo.
 
-Runs daily on the catto.at server via systemd timer (writing to the
-public api dir) and in the caaatto/RaiderRanked GitHub Actions workflow
-(feeding the addon's CurseForge release pipeline). Both deployments
-share this exact file.
+Regions fetched: us, eu.
+Factions fetched per region: all, horde, alliance.
+The synthetic "all" region is derived from us+eu via a population-
+weighted average at each percentile (not a true merged ranking, but
+monotonic and within a few points of an exact merge sort — cheap
+enough to run daily).
 
-Auto-detects the current expansion and main season from Raider.IO's
-static-data endpoint, falls back to the last known good values from
-state.json if the static-data call fails. Writes thresholds.json
-(consumed by the website and patched into the addon) and state.json
-(internal bookkeeping used by the population sanity guard).
+Output thresholds.json schema (additive migration):
+
+    {
+      # nested per-region / per-faction cutoffs (new)
+      "cutoffs": {
+        "us":  { "all": {...}, "horde": {...}, "alliance": {...} },
+        "eu":  { ... },
+        "all": { ... }
+      },
+
+      # flat legacy fields — mirror of cutoffs.eu.all so pre-migration
+      # consumers keep working.
+      "region": "eu",
+      "totalPlayers": <int>,
+      "top100Score": <int>,
+      "thresholds": { RANK: {"minScore": int, "wingScore": int}, ... },
+
+      # season metadata (unchanged)
+      "season": "season-mn-1",
+      "seasonName": "Season 1",
+      "seasonStart": "2026-...Z",
+      "expansionId": 11,
+      "updated": "..."
+    }
+
+Runs daily on catto.at (systemd timer, writes /var/www/catto.at/api/
+raiderranked/thresholds.json) and in caaatto/RaiderRanked GitHub
+Actions (feeds CurseForge release pipeline). Both deployments share
+this exact file.
 """
 
 import json
@@ -24,37 +51,27 @@ from pathlib import Path
 
 import requests
 
-# RR_SEASON acts as a manual override for emergencies. When set, the
-# auto-detection is bypassed and the given slug is used directly. The
-# script still tries to look up metadata for that slug from static-data
-# so seasonName/seasonStart can be populated.
 SEASON_OVERRIDE = os.getenv("RR_SEASON")
-# RR_EXPANSION_ID pins to a specific Raider.IO expansion (10 = TWW,
-# 11 = Midnight, ...). When unset the script probes upward from
-# EXPANSION_BASELINE and picks the highest expansion with a started
-# main season for the configured region, so cross-expansion rollovers
-# do not require a code change.
 EXPANSION_OVERRIDE = int(os.getenv("RR_EXPANSION_ID")) if os.getenv("RR_EXPANSION_ID") else None
-EXPANSION_BASELINE = 11  # 11 = Midnight; lowest expansion auto-detect considers
-EXPANSION_PROBE_RANGE = 5  # probe IDs [BASELINE, BASELINE + RANGE)
-REGION = os.getenv("RR_REGION", "eu")
+EXPANSION_BASELINE = 11
+EXPANSION_PROBE_RANGE = 5
+# Region whose season slug / seasonStart is treated as authoritative for
+# metadata (seasonStart varies by region, but only one gets embedded).
+PRIMARY_REGION = os.getenv("RR_PRIMARY_REGION", "eu")
 OUTPUT_DIR = Path(os.getenv("RR_OUTPUT_DIR", "/var/www/catto.at/api/raiderranked"))
-# state.json defaults to next to thresholds.json. Override is useful in CI
-# contexts where the output dir is ephemeral (e.g. GitHub Actions ./build)
-# but the state needs to persist via a committed file at a stable path.
 STATE_PATH = Path(os.getenv("RR_STATE_PATH")) if os.getenv("RR_STATE_PATH") else None
 
 RIO_BASE = "https://raider.io/api"
-REQUEST_DELAY = 0.4  # be nice to rio
+REQUEST_DELAY = 0.4
 
-# Refuse to write if the population on the same season slug drops by
-# more than this fraction between runs. Catches both API hiccups and
-# the period right before/after a season-end where the snapshot can
-# briefly become incoherent.
 MAX_POPULATION_DROP = 0.5
 
-# (rank_id, top_percentile, bottom_percentile)
-# top is exclusive, bottom inclusive. sorted top to bottom.
+REGIONS = ["us", "eu"]
+# None = no faction filter (all). "horde" / "alliance" map to the
+# rankings API's faction query param.
+FACTIONS = [None, "horde", "alliance"]
+FACTION_KEY = {None: "all", "horde": "horde", "alliance": "alliance"}
+
 BRACKETS = [
     ("CHALLENGER",  0.000, 0.001),
     ("GRANDMASTER", 0.001, 0.003),
@@ -68,13 +85,12 @@ BRACKETS = [
     ("IRON",        0.900, 1.000),
 ]
 
-TOP_100_POSITION = 99  # 0-indexed: position 99 = 100th player
+TOP_100_POSITION = 99
 
 
-# --- Season resolution ----------------------------------------------------
+# --- Season resolution (unchanged from single-region version) -------------
 
 def fetch_seasons(session, expansion_id):
-    """Return the seasons list from Raider.IO static data for the given expansion."""
     time.sleep(REQUEST_DELAY)
     resp = session.get(
         f"{RIO_BASE}/v1/mythic-plus/static-data",
@@ -86,22 +102,7 @@ def fetch_seasons(session, expansion_id):
 
 
 def detect_active_expansion(session, region, now_iso):
-    """Probe expansion IDs from EXPANSION_BASELINE upward, return
-    (expansion_id, seasons) for the expansion whose latest started
-    main_season is most recent in the region.
-
-    When the next expansion launches with its first main season, that
-    season's start timestamp will be more recent than any of the
-    previous expansion's, so this naturally promotes to the new
-    expansion ID without a code change. Until that first season
-    actually starts, the previous expansion still wins.
-
-    Stops probing after two consecutive misses (HTTP error or no
-    started main_seasons) so a brand-new expansion ID does not cause
-    runaway requests. Returns None if every probe came up empty;
-    callers should fall back to state.json or hard-error.
-    """
-    candidates = []  # (latest_start, expansion_id, seasons)
+    candidates = []
     consecutive_misses = 0
     for eid in range(EXPANSION_BASELINE, EXPANSION_BASELINE + EXPANSION_PROBE_RANGE):
         try:
@@ -112,7 +113,6 @@ def detect_active_expansion(session, region, now_iso):
             if consecutive_misses >= 2:
                 break
             continue
-
         started = [
             s for s in seasons
             if s.get("is_main_season")
@@ -126,40 +126,23 @@ def detect_active_expansion(session, region, now_iso):
             consecutive_misses += 1
             if consecutive_misses >= 2:
                 break
-
     if not candidates:
         return None
-
     candidates.sort(reverse=True)
     _, eid, seasons = candidates[0]
     return eid, seasons
 
 
 def resolve_active_season(seasons, now_iso, region, slug_override=None):
-    """Pick the season we should compute thresholds for.
-
-    Override path: return the season matching slug_override (any kind),
-    so emergency overrides still get full metadata.
-
-    Auto-detect path: among main_seasons that have already started in the
-    given region, prefer the one whose [starts, ends) window contains
-    `now_iso`. If multiple match (e.g. a "post" season overlapping the
-    next pre-patch), prefer the one with the latest start. If none is
-    currently live, fall back to the latest started season. Raider.IO
-    keeps old snapshots queryable, so the previous season is still the
-    correct anchor during the gap before the next one launches.
-    """
     if slug_override:
         for s in seasons:
             if s.get("slug") == slug_override:
                 return s
         return None
-
     main = [s for s in seasons if s.get("is_main_season")]
     started = [s for s in main if s.get("starts", {}).get(region, "") <= now_iso]
     if not started:
         return None
-
     live = [s for s in started if now_iso < s.get("ends", {}).get(region, "")]
     pool = live or started
     return max(pool, key=lambda s: s["starts"][region])
@@ -189,32 +172,33 @@ def write_state(state):
     tmp.rename(path)
 
 
-# --- Raider.IO client -----------------------------------------------------
+# --- Raider.IO client (now faction-aware) ---------------------------------
 
 class RioClient:
-    """Thin wrapper around the Raider.IO rankings API with page caching."""
-
-    def __init__(self, session, season, region):
+    def __init__(self, session, season, region, faction=None):
         self.session = session
         self.season = season
         self.region = region
+        self.faction = faction  # None | "horde" | "alliance"
         self._cache = {}
         self._page_size = None
 
     def _get_page(self, page):
         if page in self._cache:
             return self._cache[page]
-
         time.sleep(REQUEST_DELAY)
+        params = {
+            "season": self.season,
+            "region": self.region,
+            "class": "all",
+            "role": "all",
+            "page": page,
+        }
+        if self.faction:
+            params["faction"] = self.faction
         resp = self.session.get(
             f"{RIO_BASE}/mythic-plus/rankings/characters",
-            params={
-                "season": self.season,
-                "region": self.region,
-                "class": "all",
-                "role": "all",
-                "page": page,
-            },
+            params=params,
             timeout=30,
         )
         resp.raise_for_status()
@@ -224,7 +208,6 @@ class RioClient:
 
     @staticmethod
     def _unpack(data):
-        """Handle the Raider.IO rankings response format."""
         inner = data.get("rankings", data)
         ui = inner.get("ui", {})
         page_size = ui.get("pageSize", 100)
@@ -235,12 +218,10 @@ class RioClient:
 
     @staticmethod
     def _extract_score(entry):
-        """Pull the M+ score out of a ranking entry."""
         for key in ("score", "mythicPlusScore", "mythic_plus_score"):
             val = entry.get(key)
             if isinstance(val, (int, float)):
                 return int(val)
-        # try nested under character
         char = entry.get("character", {})
         for key in ("score", "mythicPlusScore"):
             val = char.get(key)
@@ -255,14 +236,11 @@ class RioClient:
         return total
 
     def score_at(self, position):
-        """Return the M+ score at the given 0-indexed ranking position."""
         ps = self._page_size or 20
         page = position // ps
         offset = position % ps
-
         data = self._get_page(page)
         _, entries = self._unpack(data)
-
         if offset >= len(entries):
             return 0
         return self._extract_score(entries[offset])
@@ -270,79 +248,112 @@ class RioClient:
 
 # --- Threshold computation ------------------------------------------------
 
-def compute(client):
+def compute_for_client(client, label):
     total = client.get_total()
+    print(f"  [{label}] total: {total:,}")
     if total == 0:
-        print("ERROR: 0 players returned, aborting", file=sys.stderr)
-        sys.exit(1)
+        return {"_total": 0, "_top100": 0}
 
-    print(f"Total ranked players: {total:,}")
-
-    # Top 100 threshold: score of the 100th ranked player
-    top100_score = max(1, client.score_at(TOP_100_POSITION))
-    print(f"  Top 100 score (pos {TOP_100_POSITION + 1}): {top100_score}")
-
-    thresholds = {}
+    result = {
+        "_total": total,
+        "_top100": max(1, client.score_at(TOP_100_POSITION)),
+    }
     for rank_id, top_pct, bot_pct in BRACKETS:
-        # position of the lowest-scoring player in this bracket
         min_pos = max(0, min(total - 1, int(total * bot_pct) - 1))
-        # midpoint position for wingScore
         mid_pos = max(0, min(total - 1, int(total * (top_pct + bot_pct) / 2)))
-
         min_score = max(1, client.score_at(min_pos))
         wing_score = max(min_score, client.score_at(mid_pos))
+        result[rank_id] = {"minScore": min_score, "wingScore": wing_score}
+    return result
 
-        thresholds[rank_id] = {"minScore": min_score, "wingScore": wing_score}
-        print(f"  {rank_id:15s}  min={min_score:5d}  wing={wing_score:5d}")
 
-    return total, top100_score, thresholds
+def merge_all_regions(per_region):
+    """Approximate the 'all regions' cutoff at each percentile using a
+    population-weighted average of the per-region values. Exact merge
+    would require a combined sort across all pages — this is within a
+    few rating points and costs zero extra API calls.
+
+    per_region: { "us": {faction_key: bracket_dict}, "eu": {...} }
+    Returns: { faction_key: bracket_dict }
+    """
+    out = {}
+    for fkey in ("all", "horde", "alliance"):
+        regions = [per_region[r][fkey] for r in REGIONS if per_region[r].get(fkey)]
+        if not regions:
+            continue
+        totals = [r["_total"] for r in regions]
+        pop = sum(totals)
+        if pop == 0:
+            continue
+
+        merged = {
+            "_total": pop,
+            "_top100": max(r["_top100"] for r in regions),
+        }
+        for rank_id, _, _ in BRACKETS:
+            vals = [r[rank_id] for r in regions if rank_id in r]
+            if len(vals) != len(regions):
+                continue
+            min_score = round(sum(v["minScore"] * t for v, t in zip(vals, totals)) / pop)
+            wing_score = round(sum(v["wingScore"] * t for v, t in zip(vals, totals)) / pop)
+            merged[rank_id] = {
+                "minScore": max(1, min_score),
+                "wingScore": max(min_score, wing_score),
+            }
+        out[fkey] = merged
+    return out
+
+
+def strip_meta(bracket_dict):
+    """Drop _total / _top100 keys before emitting the per-rank thresholds block."""
+    return {k: v for k, v in bracket_dict.items() if not k.startswith("_")}
 
 
 # --- Output ---------------------------------------------------------------
 
-def write_json(season_meta, expansion_id, total, top100_score, thresholds):
+def write_json(season_meta, expansion_id, cutoffs, primary_region):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUTPUT_DIR / "thresholds.json"
+
+    primary_all = cutoffs[primary_region]["all"]
 
     payload = {
         "season": season_meta["slug"],
         "seasonName": season_meta.get("name", season_meta["slug"]),
-        "seasonStart": season_meta.get("starts", {}).get(REGION),
+        "seasonStart": season_meta.get("starts", {}).get(primary_region),
         "expansionId": expansion_id,
-        "region": REGION,
         "updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "totalPlayers": total,
-        "top100Score": top100_score,
-        "thresholds": thresholds,
+        "cutoffs": {
+            region: {
+                fkey: {
+                    "totalPlayers": data["_total"],
+                    "top100Score": data["_top100"],
+                    "thresholds": strip_meta(data),
+                }
+                for fkey, data in region_data.items()
+            }
+            for region, region_data in cutoffs.items()
+        },
+        # Legacy flat keys (mirror of primary region's "all" faction).
+        "region": primary_region,
+        "totalPlayers": primary_all["_total"],
+        "top100Score": primary_all["_top100"],
+        "thresholds": strip_meta(primary_all),
     }
 
     tmp = out.with_suffix(".tmp")
     with open(tmp, "w") as f:
         json.dump(payload, f, indent=2)
         f.write("\n")
-    tmp.rename(out)  # atomic on same fs
-
+    tmp.rename(out)
     print(f"Written to {out}")
 
 
 # --- Main -----------------------------------------------------------------
 
 def resolve_with_fallback(session, state, now_iso):
-    """Resolve (season_meta, expansion_id) with graceful degradation
-    when the static-data endpoint is unreachable.
-
-    Two paths:
-      - EXPANSION_OVERRIDE set: single fetch against the pinned expansion.
-      - Otherwise: probe expansions starting at EXPANSION_BASELINE and
-        let detect_active_expansion pick the highest one with a started
-        main season for the region.
-
-    Falls back to SEASON_OVERRIDE or state.json on hard failure.
-    Returns (season_meta_dict, resolved_expansion_id).
-    """
     seasons = None
     expansion_id = None
-
     if EXPANSION_OVERRIDE is not None:
         try:
             seasons = fetch_seasons(session, EXPANSION_OVERRIDE)
@@ -351,7 +362,7 @@ def resolve_with_fallback(session, state, now_iso):
             print(f"WARN: static-data fetch failed: {e}", file=sys.stderr)
     else:
         try:
-            detected = detect_active_expansion(session, REGION, now_iso)
+            detected = detect_active_expansion(session, PRIMARY_REGION, now_iso)
         except Exception as e:
             print(f"WARN: expansion auto-detect failed: {e}", file=sys.stderr)
             detected = None
@@ -359,50 +370,43 @@ def resolve_with_fallback(session, state, now_iso):
             expansion_id, seasons = detected
 
     if seasons is not None:
-        meta = resolve_active_season(seasons, now_iso, REGION, SEASON_OVERRIDE)
+        meta = resolve_active_season(seasons, now_iso, PRIMARY_REGION, SEASON_OVERRIDE)
         if meta:
             return meta, expansion_id
         print(
             f"WARN: no season resolved (override={SEASON_OVERRIDE!r}, "
-            f"region={REGION}, expansion={expansion_id})",
+            f"region={PRIMARY_REGION}, expansion={expansion_id})",
             file=sys.stderr,
         )
 
-    # All fallbacks below pull the expansion ID from state.json so the
-    # written output stays internally consistent: the season slug we
-    # fall back to was originally computed against state's expansion,
-    # not whatever the user just tried to override to.
     fallback_expansion = state.get("expansionId", EXPANSION_BASELINE)
-
     if SEASON_OVERRIDE:
         print(f"Falling back to override slug: {SEASON_OVERRIDE}", file=sys.stderr)
         return {"slug": SEASON_OVERRIDE, "name": SEASON_OVERRIDE}, fallback_expansion
-
     if state.get("activeSeason"):
         slug = state["activeSeason"]
         print(f"Falling back to last known good season: {slug}", file=sys.stderr)
         meta = {
             "slug": slug,
             "name": state.get("seasonName", slug),
-            "starts": {REGION: state.get("seasonStart")} if state.get("seasonStart") else {},
+            "starts": {PRIMARY_REGION: state.get("seasonStart")} if state.get("seasonStart") else {},
         }
         return meta, fallback_expansion
-
     print("ERROR: no season resolvable and no fallback available", file=sys.stderr)
     sys.exit(1)
 
 
 def main():
-    print(f"--- RaiderRanked threshold update ---")
+    print("--- RaiderRanked threshold update (multi-region / multi-faction) ---")
     print(f"{datetime.now(timezone.utc).isoformat()}")
     print(
-        f"Region: {REGION} | "
+        f"Primary region: {PRIMARY_REGION} | "
         f"Expansion override: {EXPANSION_OVERRIDE if EXPANSION_OVERRIDE is not None else '(auto)'} | "
         f"Season override: {SEASON_OVERRIDE or '(none)'}\n"
     )
 
     session = requests.Session()
-    session.headers["User-Agent"] = "RaiderRanked-Updater/1.0"
+    session.headers["User-Agent"] = "RaiderRanked-Updater/2.0"
 
     state = read_state()
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -417,37 +421,45 @@ def main():
     if promoted:
         print(f"*** Season promoted: {state['activeSeason']} -> {active_season} ***")
     print(f"Active expansion: {expansion_id}")
-    print(f"Active season: {active_season} ({season_meta.get('name', '?')})")
-    print(f"Region start: {season_meta.get('starts', {}).get(REGION, '?')}\n")
+    print(f"Active season: {active_season} ({season_meta.get('name', '?')})\n")
 
-    client = RioClient(session, active_season, REGION)
-    total, top100_score, thresholds = compute(client)
+    # Fetch all 6 concrete combos (2 regions × 3 factions).
+    cutoffs = {r: {} for r in REGIONS}
+    for region in REGIONS:
+        for faction in FACTIONS:
+            fkey = FACTION_KEY[faction]
+            label = f"{region}/{fkey}"
+            client = RioClient(session, active_season, region, faction)
+            cutoffs[region][fkey] = compute_for_client(client, label)
 
-    # Sanity check: catastrophic population drop on the same season slug
-    # is almost always either an API blip or the season ending. Refuse to
-    # overwrite a healthy file with a half-empty snapshot.
+    # Derive the synthetic "all" region via population-weighted merge.
+    cutoffs["all"] = merge_all_regions(cutoffs)
+
+    # Sanity guard against half-empty snapshots: compare the flagship
+    # bucket (primary region / all factions) against last run on same season.
+    primary_total = cutoffs[PRIMARY_REGION]["all"]["_total"]
     last_total = state.get("totalPlayers", 0)
     last_season = state.get("activeSeason")
     if (
         active_season == last_season
         and last_total > 0
-        and total < last_total * (1 - MAX_POPULATION_DROP)
+        and primary_total < last_total * (1 - MAX_POPULATION_DROP)
     ):
         print(
-            f"ERROR: totalPlayers dropped {last_total:,} -> {total:,} "
-            f"(>{int(MAX_POPULATION_DROP * 100)}% on same season). "
+            f"ERROR: totalPlayers ({PRIMARY_REGION}/all) dropped "
+            f"{last_total:,} -> {primary_total:,} (>{int(MAX_POPULATION_DROP * 100)}% on same season). "
             f"Refusing to overwrite.",
             file=sys.stderr,
         )
         sys.exit(2)
 
-    write_json(season_meta, expansion_id, total, top100_score, thresholds)
+    write_json(season_meta, expansion_id, cutoffs, PRIMARY_REGION)
     write_state({
         "activeSeason": active_season,
         "seasonName": season_meta.get("name"),
-        "seasonStart": season_meta.get("starts", {}).get(REGION),
+        "seasonStart": season_meta.get("starts", {}).get(PRIMARY_REGION),
         "expansionId": expansion_id,
-        "totalPlayers": total,
+        "totalPlayers": primary_total,
         "lastUpdated": now_iso,
     })
     print("Done.")

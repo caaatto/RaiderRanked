@@ -1273,6 +1273,54 @@ function RR:RegisterSettings()
         function() return not self.db.minimap.hide end,
         function(val) self:ToggleMinimapButton(val) end)
 
+    -- ── Region × Faction cutoff dropdowns ────────────────────────────────
+    -- Selects which Raider.IO cutoff set drives the rank thresholds.
+    -- Requires Settings.CreateDropdown (TWW+). Silently skipped on older
+    -- builds; users can still switch via /rr cutoff.
+    if Settings.CreateDropdown then
+        local regionSetting = Settings.RegisterProxySetting(
+            category,
+            "RAIDERRANKED_CUTOFF_REGION",
+            Settings.VarType.String,
+            "Cutoff region",
+            "eu",
+            function() return self.db.cutoffRegion or "eu" end,
+            function(val) self:SwitchCutoffSelection(val, nil) end)
+
+        local function RegionOptions()
+            local c = Settings.CreateControlTextContainer()
+            for _, r in ipairs(RR.CUTOFF_REGIONS) do
+                c:Add(r, RR.CUTOFF_REGION_LABELS[r] or r)
+            end
+            return c:GetData()
+        end
+
+        Settings.CreateDropdown(
+            category, regionSetting, RegionOptions,
+            "Which region's M+ rating population determines your rank brackets. \"All Regions\" merges US and EU populations.")
+
+        local factionSetting = Settings.RegisterProxySetting(
+            category,
+            "RAIDERRANKED_CUTOFF_FACTION",
+            Settings.VarType.String,
+            "Cutoff faction",
+            "all",
+            function() return self.db.cutoffFaction or "all" end,
+            function(val) self:SwitchCutoffSelection(nil, val) end)
+
+        local function FactionOptions()
+            local c = Settings.CreateControlTextContainer()
+            for _, f in ipairs(RR.CUTOFF_FACTIONS) do
+                c:Add(f, RR.CUTOFF_FACTION_LABELS[f] or f)
+            end
+            return c:GetData()
+        end
+
+        Settings.CreateDropdown(
+            category, factionSetting, FactionOptions,
+            "Faction-specific cutoff. The M+ Hero title is awarded per faction, so Horde/Alliance often have different 0.1% cutoffs.")
+    end
+
     Settings.RegisterAddOnCategory(category)
     self.settingsCategory = category
 end
