@@ -6,6 +6,22 @@ thresholds per combo.
 
 Regions fetched: us, eu.
 Factions fetched per region: all, horde, alliance.
+
+Two different Raider.IO endpoints are used because the rankings
+endpoint silently ignores the faction query param (empirically — it
+returns an empty page for faction=horde|alliance):
+
+- faction="all": paginate /mythic-plus/rankings/characters, exact
+  values at every bracket boundary (unchanged behavior).
+- faction="horde" / "alliance": /v1/mythic-plus/season-cutoffs gives
+  pre-computed per-faction quantiles at p999, p990, p900, p750, p600.
+  Bracket boundaries with quantile in [0.6, 0.999] are linearly
+  interpolated between those points. Below q=0.6 (SILVER, BRONZE,
+  IRON) the endpoint has no data, so those brackets mirror the
+  region's all-faction values. top100Score for faction views is also
+  reused from the all-faction computation (titled-tier players
+  dominate the overall top 100 regardless of faction).
+
 The synthetic "all" region is derived from us+eu via a population-
 weighted average at each percentile (not a true merged ranking, but
 monotonic and within a few points of an exact merge sort — cheap
@@ -67,10 +83,13 @@ REQUEST_DELAY = 0.4
 MAX_POPULATION_DROP = 0.5
 
 REGIONS = ["us", "eu"]
-# None = no faction filter (all). "horde" / "alliance" map to the
-# rankings API's faction query param.
-FACTIONS = [None, "horde", "alliance"]
-FACTION_KEY = {None: "all", "horde": "horde", "alliance": "alliance"}
+FACTION_KEYS = ["all", "horde", "alliance"]
+# Quantiles served by /v1/mythic-plus/season-cutoffs, ascending. Used
+# as interpolation anchors for the faction-specific brackets.
+CUTOFF_QUANTILES = [0.6, 0.75, 0.9, 0.99, 0.999]
+CUTOFF_QUANTILE_KEYS = {
+    0.6: "p600", 0.75: "p750", 0.9: "p900", 0.99: "p990", 0.999: "p999",
+}
 
 BRACKETS = [
     ("CHALLENGER",  0.000, 0.001),
@@ -172,14 +191,19 @@ def write_state(state):
     tmp.rename(path)
 
 
-# --- Raider.IO client (now faction-aware) ---------------------------------
+# --- Raider.IO client -----------------------------------------------------
 
 class RioClient:
-    def __init__(self, session, season, region, faction=None):
+    """Paginated access to the all-factions rankings endpoint. The
+    faction query param is not supported by this endpoint (empirical),
+    so per-faction cutoffs come from a different endpoint entirely —
+    see fetch_faction_quantiles below.
+    """
+
+    def __init__(self, session, season, region):
         self.session = session
         self.season = season
         self.region = region
-        self.faction = faction  # None | "horde" | "alliance"
         self._cache = {}
         self._page_size = None
 
@@ -187,18 +211,15 @@ class RioClient:
         if page in self._cache:
             return self._cache[page]
         time.sleep(REQUEST_DELAY)
-        params = {
-            "season": self.season,
-            "region": self.region,
-            "class": "all",
-            "role": "all",
-            "page": page,
-        }
-        if self.faction:
-            params["faction"] = self.faction
         resp = self.session.get(
             f"{RIO_BASE}/mythic-plus/rankings/characters",
-            params=params,
+            params={
+                "season": self.season,
+                "region": self.region,
+                "class": "all",
+                "role": "all",
+                "page": page,
+            },
             timeout=30,
         )
         resp.raise_for_status()
@@ -248,7 +269,10 @@ class RioClient:
 
 # --- Threshold computation ------------------------------------------------
 
-def compute_for_client(client, label):
+def compute_from_rankings(client, label):
+    """All-factions path: paginate the rankings endpoint and pick scores
+    at exact percentile positions. Used for every region's "all" slot.
+    """
     total = client.get_total()
     print(f"  [{label}] total: {total:,}")
     if total == 0:
@@ -263,6 +287,87 @@ def compute_for_client(client, label):
         mid_pos = max(0, min(total - 1, int(total * (top_pct + bot_pct) / 2)))
         min_score = max(1, client.score_at(min_pos))
         wing_score = max(min_score, client.score_at(mid_pos))
+        result[rank_id] = {"minScore": min_score, "wingScore": wing_score}
+    return result
+
+
+def fetch_faction_quantiles(session, season, region):
+    """Return the raw cutoffs payload for one region, containing
+    per-faction quantiles at p999, p990, p900, p750, p600. Factions
+    covered: horde, alliance, all.
+    """
+    time.sleep(REQUEST_DELAY)
+    resp = session.get(
+        f"{RIO_BASE}/v1/mythic-plus/season-cutoffs",
+        params={"season": season, "region": region},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json().get("cutoffs", {})
+
+
+def _score_at_quantile(quantile_values, q):
+    """Linearly interpolate a cutoff score at quantile q.
+
+    quantile_values: list of (quantile, score) sorted ascending by
+    quantile. Covers [0.6, 0.999]. Returns None for q outside the
+    anchors, so callers can fall back rather than extrapolate.
+    """
+    if q <= quantile_values[0][0] or q > quantile_values[-1][0]:
+        return None
+    for i in range(len(quantile_values) - 1):
+        q_lo, s_lo = quantile_values[i]
+        q_hi, s_hi = quantile_values[i + 1]
+        if q_lo <= q <= q_hi:
+            if q_hi == q_lo:
+                return s_lo
+            frac = (q - q_lo) / (q_hi - q_lo)
+            return s_lo + (s_hi - s_lo) * frac
+    return None
+
+
+def compute_from_quantiles(cutoffs_payload, faction, region_all, label):
+    """Faction path: build a bracket dict from season-cutoffs quantile
+    anchors. Brackets with quantile below 0.6 have no data at this
+    endpoint and mirror the region's all-faction values (SILVER,
+    BRONZE, IRON). top100Score mirrors all-faction too.
+
+    region_all: the already-computed all-faction bracket dict for this
+    region, used as the fallback source.
+    """
+    entries = []
+    total = 0
+    for qk in CUTOFF_QUANTILES:
+        entry = cutoffs_payload.get(CUTOFF_QUANTILE_KEYS[qk], {}).get(faction)
+        if not entry or entry.get("quantileMinValue") is None:
+            continue
+        entries.append((qk, float(entry["quantileMinValue"])))
+        total = max(total, int(entry.get("totalPopulationCount") or 0))
+    entries.sort()
+
+    print(f"  [{label}] total: {total:,} (via season-cutoffs, {len(entries)} anchors)")
+    if not entries or total == 0:
+        # Endpoint data missing — mirror all-faction wholesale so the
+        # slot is at least non-broken.
+        return dict(region_all, _total=region_all.get("_total", 0))
+
+    result = {
+        "_total": total,
+        "_top100": region_all.get("_top100", 0),
+    }
+    for rank_id, top_pct, bot_pct in BRACKETS:
+        bot_q = 1.0 - bot_pct
+        mid_q = 1.0 - (top_pct + bot_pct) / 2
+
+        interp_min = _score_at_quantile(entries, bot_q)
+        interp_wing = _score_at_quantile(entries, mid_q)
+
+        fallback = region_all.get(rank_id, {})
+        min_score = int(round(interp_min)) if interp_min is not None else fallback.get("minScore", 1)
+        wing_score = int(round(interp_wing)) if interp_wing is not None else fallback.get("wingScore", min_score)
+
+        min_score = max(1, min_score)
+        wing_score = max(min_score, wing_score)
         result[rank_id] = {"minScore": min_score, "wingScore": wing_score}
     return result
 
@@ -423,14 +528,21 @@ def main():
     print(f"Active expansion: {expansion_id}")
     print(f"Active season: {active_season} ({season_meta.get('name', '?')})\n")
 
-    # Fetch all 6 concrete combos (2 regions × 3 factions).
+    # Fetch all 6 concrete combos (2 regions × 3 factions). Per region,
+    # the "all" slot is computed from the paginated rankings endpoint;
+    # the horde/alliance slots come from the quantile endpoint because
+    # the rankings endpoint ignores the faction query param.
     cutoffs = {r: {} for r in REGIONS}
     for region in REGIONS:
-        for faction in FACTIONS:
-            fkey = FACTION_KEY[faction]
-            label = f"{region}/{fkey}"
-            client = RioClient(session, active_season, region, faction)
-            cutoffs[region][fkey] = compute_for_client(client, label)
+        client = RioClient(session, active_season, region)
+        cutoffs[region]["all"] = compute_from_rankings(client, f"{region}/all")
+
+        quantile_payload = fetch_faction_quantiles(session, active_season, region)
+        for faction in ("horde", "alliance"):
+            cutoffs[region][faction] = compute_from_quantiles(
+                quantile_payload, faction, cutoffs[region]["all"],
+                label=f"{region}/{faction}",
+            )
 
     # Derive the synthetic "all" region via population-weighted merge.
     cutoffs["all"] = merge_all_regions(cutoffs)
