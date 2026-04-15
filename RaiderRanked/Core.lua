@@ -214,6 +214,7 @@ function RR:SwitchCutoffSelection(region, faction)
     self:ApplyThresholds(self.db.thresholds)
     if self.RefreshPlayerRank then self:RefreshPlayerRank() end
     if self.UpdateRankFrame then self:UpdateRankFrame() end
+    if self.RefreshGroupPanel then self:RefreshGroupPanel() end
     return true
 end
 
