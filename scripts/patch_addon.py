@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """
-Patch RankSystem.lua minScore/wingScore/TOP_100_SCORE values and
-ScoreHistory.lua SEASON_START constant from thresholds.json.
+Patch RaiderRanked Lua files from thresholds.json.
 
-Preserves comments and formatting. Skips wingScore = nil (UNRANKED).
-ScoreHistory.lua is located as a sibling of RankSystem.lua.
+Targets:
+  - RaiderRanked/Cutoffs.lua     (new — 9 region/faction blocks)
+  - RaiderRanked/RankSystem.lua  (seed fallback — mirrors primary region/all)
+  - RaiderRanked/ScoreHistory.lua (SEASON_START constant)
+
+Preserves comments, whitespace, and line-by-line formatting. Skips
+wingScore = nil (UNRANKED). Cutoffs.lua sections are identified by
+their RR.CUTOFFS.<region>.<faction> = { header; each block is patched
+in isolation until its terminating `}` line.
 """
 
 import json
@@ -19,9 +25,97 @@ MONTH_NAMES = [
     "July", "August", "September", "October", "November", "December",
 ]
 
+CUTOFFS_HEADER_RE = re.compile(r'^RR\.CUTOFFS\.(\w+)\.(\w+)\s*=\s*\{')
+
+
+def _patch_rank_block(lines, start_idx, thresholds, top100):
+    """Patch minScore/wingScore/top100Score inside a Lua block starting
+    at start_idx (the `{` line). Walks forward until a line matching
+    `^}` is found, then returns that index. Lines outside [start, end]
+    are untouched.
+    """
+    i = start_idx + 1
+    current_rank = None
+    while i < len(lines):
+        line = lines[i]
+        if re.match(r'^\}\s*$', line):
+            return i
+
+        if top100 is not None:
+            m = re.match(r'(\s*top100Score\s*=\s*)\d+(.*)', line)
+            if m:
+                lines[i] = f'{m.group(1)}{top100}{m.group(2)}\n'
+                i += 1
+                continue
+
+        # Compact form: CHALLENGER = { minScore = N, wingScore = M },
+        m = re.match(
+            r'(\s*)(\w+)(\s*=\s*\{\s*minScore\s*=\s*)\d+(\s*,\s*wingScore\s*=\s*)\d+(\s*\}.*)',
+            line,
+        )
+        if m:
+            rank_id = m.group(2)
+            vals = thresholds.get(rank_id)
+            if vals:
+                lines[i] = (
+                    f'{m.group(1)}{rank_id}{m.group(3)}{vals["minScore"]}'
+                    f'{m.group(4)}{vals["wingScore"]}{m.group(5)}\n'
+                )
+            i += 1
+            continue
+
+        # Fallback: multi-line rank block (RankSystem.lua style).
+        m = re.match(r'\s*id\s*=\s*"(\w+)"', line)
+        if m:
+            current_rank = m.group(1)
+        elif current_rank and current_rank in thresholds:
+            vals = thresholds[current_rank]
+            mm = re.match(r'(\s*minScore\s*=\s*)\d+(.*)', line)
+            if mm:
+                lines[i] = f'{mm.group(1)}{vals["minScore"]}{mm.group(2)}\n'
+            else:
+                mm = re.match(r'(\s*wingScore\s*=\s*)\d+(.*)', line)
+                if mm:
+                    lines[i] = f'{mm.group(1)}{vals["wingScore"]}{mm.group(2)}\n'
+            if re.match(r'\s*\},?\s*$', line):
+                current_rank = None
+        i += 1
+
+    return len(lines) - 1
+
+
+def patch_cutoffs(lua_path, cutoffs):
+    """Walk Cutoffs.lua and patch every RR.CUTOFFS.<region>.<faction>
+    block whose (region, faction) is present in cutoffs.
+    """
+    with open(lua_path) as f:
+        lines = f.readlines()
+
+    i = 0
+    patched_sections = []
+    while i < len(lines):
+        m = CUTOFFS_HEADER_RE.match(lines[i])
+        if m:
+            region, faction = m.group(1), m.group(2)
+            region_data = cutoffs.get(region, {}).get(faction)
+            if region_data:
+                end = _patch_rank_block(
+                    lines, i,
+                    region_data["thresholds"],
+                    region_data.get("top100Score"),
+                )
+                patched_sections.append(f"{region}.{faction}")
+                i = end + 1
+                continue
+        i += 1
+
+    with open(lua_path, "w") as f:
+        f.writelines(lines)
+    print(f"Patched {lua_path}: {', '.join(patched_sections) or '(no sections matched)'}")
+
 
 def patch_rank_system(lua_path, thresholds, top100_score):
-    """Update minScore/wingScore for each rank and TOP_100_SCORE."""
+    """Legacy multi-line rank block patcher for RankSystem.lua seed values."""
     with open(lua_path) as f:
         lines = f.readlines()
 
@@ -39,11 +133,9 @@ def patch_rank_system(lua_path, thresholds, top100_score):
 
         if current_rank and current_rank in thresholds:
             vals = thresholds[current_rank]
-
             m = re.match(r'(\s*minScore\s*=\s*)\d+(.*)', line)
             if m:
                 lines[i] = f'{m.group(1)}{vals["minScore"]}{m.group(2)}\n'
-
             m = re.match(r'(\s*wingScore\s*=\s*)\d+(.*)', line)
             if m:
                 lines[i] = f'{m.group(1)}{vals["wingScore"]}{m.group(2)}\n'
@@ -57,11 +149,6 @@ def patch_rank_system(lua_path, thresholds, top100_score):
 
 
 def patch_score_history(lua_path, season_meta):
-    """Update SEASON_START constant (and the comment line above it) from
-    the season metadata in thresholds.json. No-op if seasonStart is
-    missing, so the old hard-coded value stays rather than risking a bad
-    anchor.
-    """
     starts_iso = season_meta.get("seasonStart")
     if not starts_iso:
         print(f"WARN: thresholds.json has no seasonStart, skipping {lua_path}")
@@ -92,7 +179,6 @@ def patch_score_history(lua_path, season_meta):
     for i, line in enumerate(lines):
         if re.match(r'\s*local\s+SEASON_START\s*=\s*time\s*\(', line):
             lines[i] = new_const
-            # Replace the season-start comment if it sits directly above.
             if i > 0 and re.match(r'\s*--\s*\S+.*Season.*start', lines[i - 1]):
                 lines[i - 1] = new_comment
             patched = True
@@ -118,13 +204,25 @@ def main():
     with open(thresholds_path) as f:
         data = json.load(f)
 
+    addon_dir = rank_system_path.parent
+
+    # 1. Cutoffs.lua — the multi-region / multi-faction data table.
+    cutoffs_path = addon_dir / "Cutoffs.lua"
+    if cutoffs_path.exists() and data.get("cutoffs"):
+        patch_cutoffs(cutoffs_path, data["cutoffs"])
+    else:
+        print(f"WARN: {cutoffs_path} or data.cutoffs missing — skipping multi-region patch")
+
+    # 2. RankSystem.lua — keep seed values in sync with primary region/all
+    # so first-frame fallback stays reasonably fresh.
     patch_rank_system(
         rank_system_path,
         data["thresholds"],
         data.get("top100Score"),
     )
 
-    score_history_path = rank_system_path.parent / "ScoreHistory.lua"
+    # 3. ScoreHistory.lua — SEASON_START constant.
+    score_history_path = addon_dir / "ScoreHistory.lua"
     if score_history_path.exists():
         season_meta = {
             "season": data.get("season"),

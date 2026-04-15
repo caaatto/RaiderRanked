@@ -13,6 +13,7 @@ Libs\CallbackHandler-1.0.lua
 Libs\LibDataBroker-1.1.lua
 Libs\LibDBIcon-1.0.lua
 
+Cutoffs.lua
 RankSystem.lua
 PvPRankSystem.lua
 PvPScoreLookup.lua
