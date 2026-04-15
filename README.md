@@ -17,6 +17,8 @@ Download from [CurseForge](https://www.curseforge.com/wow/addons/raiderranked) o
 | `/rr ranks` | Show current thresholds |
 | `/rr set <RANK> <score>` | Override a threshold |
 | `/rr reset` | Restore default thresholds |
+| `/rr cutoff` | Show active cutoff region / faction |
+| `/rr cutoff <region> <faction>` | Switch cutoff (`eu`\|`us`\|`all`  ×  `all`\|`horde`\|`alliance`) |
 | `/rr anim [from] to` | Preview rank-up animation |
 | `/rr wings <size>` | Resize portrait wings (20–600) |
 | `/rr pvp` | Toggle PvP rank frame |
@@ -30,6 +32,16 @@ Download from [CurseForge](https://www.curseforge.com/wow/addons/raiderranked) o
 ## M+ Rank Brackets
 
 Thresholds are based on the current season's score distribution and updated daily via GitHub Actions.
+
+The active cutoff set is configurable per-character in the Settings panel (ESC → Options → AddOns → RaiderRanked), or via `/rr cutoff <region> <faction>`. Both the rank frame and the group panel show the active selection (e.g. `EU · Alliance`) as a muted subtitle.
+
+| Region | Faction |
+|---|---|
+| `eu` — Europe | `all` — combined |
+| `us` — North America | `horde` |
+| `all` — population-weighted merge of US + EU | `alliance` |
+
+The M+ seasonal title is awarded by Blizzard at the top 0.1% **per faction per region**, so Horde and Alliance have different cutoffs within the same region. Default selection is `eu / all`.
 
 | Rank | Percentile |
 |---|---|
@@ -61,7 +73,7 @@ PvP ratings for other players are acquired via addon messaging (instant, players
 
 ## Threshold Auto-Update
 
-A daily GitHub Actions workflow fetches the M+ score distribution from Raider.IO, computes percentile cutoffs, patches `RankSystem.lua` (rank score thresholds and Top 100 cutoff) and `ScoreHistory.lua` (the `SEASON_START` anchor), and uploads the updated addon to CurseForge.
+A daily GitHub Actions workflow fetches the M+ score distribution from Raider.IO for each region × faction combo (EU / NA × Horde / Alliance / All, plus a synthetic population-weighted `all` region), computes percentile cutoffs, patches `Cutoffs.lua` (all nine region/faction slots), `RankSystem.lua` (seed thresholds and Top 100 cutoff) and `ScoreHistory.lua` (the `SEASON_START` anchor), and uploads the updated addon to CurseForge.
 
 Both the active expansion and the active season are auto-detected from Raider.IO's `mythic-plus/static-data` endpoint on every run, so neither season rollovers (MN1 -> MN2) nor expansion rollovers (Midnight -> next) require a code change. The next scheduled run picks up the new slug, the patcher rewrites the constants from the new `seasonStart`, and CI ships an updated build. A `scripts/state.json` tracks last-known-good population, expansion, and season for a sanity guard that refuses to overwrite a healthy build with a half-empty Raider.IO snapshot, and as a fallback when static-data is unreachable. The script lives upstream in [caaatto/raiderranked-api](https://github.com/caaatto/raiderranked-api) and is mirrored byte-identical here.
 
