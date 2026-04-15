@@ -231,8 +231,12 @@ local function CreateRankFrame()
             }
             ApplyTooltipSide(DesiredSide())
         elseif newState == "frame" then
+            local regionLbl  = RR.CUTOFF_REGION_LABELS[RR.db.cutoffRegion]   or RR.db.cutoffRegion
+            local factionLbl = RR.CUTOFF_FACTION_LABELS[RR.db.cutoffFaction] or RR.db.cutoffFaction
             tooltipLines = {
                 { text = "RaiderRanked", r = 0, g = 0.8, b = 1 },
+                { text = "Cutoff: " .. regionLbl .. " \194\183 " .. factionLbl,
+                  r = 0.85, g = 0.85, b = 0.55 },
                 { text = "Left-click to show group ranks", r = 1, g = 1, b = 1 },
                 { text = RR.db.frameLocked and "Frame locked (click lock icon to unlock)"
                     or "Left-drag to move", r = 0.7, g = 0.7, b = 0.7 },
@@ -290,6 +294,14 @@ local function CreateRankFrame()
     scoreText:SetJustifyH("LEFT")
     scoreText:SetWordWrap(false)
     f.scoreText = scoreText
+
+    -- Cutoff indicator — tiny muted text bottom-right, e.g. "EU · Horde".
+    -- Reflects which Raider.IO cutoff set drives the current rank brackets.
+    local cutoffText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    cutoffText:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -8, 4)
+    cutoffText:SetJustifyH("RIGHT")
+    cutoffText:SetTextColor(0.55, 0.55, 0.6)
+    f.cutoffText = cutoffText
 
     -- Left-click toggles group panel; right-click hides frame.
     f:SetScript("OnMouseDown", function() didDrag = false end)
@@ -378,6 +390,15 @@ local function CreateGroupPanel()
     })
     p:SetBackdropColor(0, 0, 0, 0.85)
     p:EnableMouse(true)  -- prevent click-through
+
+    -- Cutoff indicator at the top of the panel — mirrors the rank frame
+    -- subtitle so it's clear which cutoff set drives these ranks.
+    local cutoffText = p:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    cutoffText:SetPoint("BOTTOMRIGHT", p, "BOTTOMRIGHT", -8, 4)
+    cutoffText:SetJustifyH("RIGHT")
+    cutoffText:SetTextColor(0.55, 0.55, 0.6)
+    p.cutoffText = cutoffText
+
     p:Hide()
     return p
 end
@@ -402,6 +423,12 @@ end
 
 function RR:RefreshGroupPanel()
     if not groupPanel or not groupPanel:IsShown() then return end
+
+    if groupPanel.cutoffText then
+        local r = RR.CUTOFF_REGION_SHORT[self.db.cutoffRegion]   or self.db.cutoffRegion
+        local f = RR.CUTOFF_FACTION_SHORT[self.db.cutoffFaction] or self.db.cutoffFaction
+        groupPanel.cutoffText:SetText(r .. " \194\183 " .. f)
+    end
 
     local units = GetGroupUnits()
 
@@ -528,6 +555,12 @@ function RR:UpdateRankFrame()
     rankFrame.scoreText:SetText(
         ColorHex(scoreColor[1] or c.r, scoreColor[2] or c.g, scoreColor[3] or c.b)
         .. label .. "|r")
+
+    if rankFrame.cutoffText then
+        local r = RR.CUTOFF_REGION_SHORT[self.db.cutoffRegion]   or self.db.cutoffRegion
+        local f = RR.CUTOFF_FACTION_SHORT[self.db.cutoffFaction] or self.db.cutoffFaction
+        rankFrame.cutoffText:SetText(r .. " \194\183 " .. f)
+    end
 end
 
 --- Public: show or hide the rank frame.
