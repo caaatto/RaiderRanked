@@ -30,7 +30,7 @@ local ALT_COLORS = {
     { r = 1.00, g = 0.35, b = 0.35 },  -- red
 }
 
--- MN Season 1 start: 25 March 2026, 04:00 UTC (EU reset).
+-- MN Season 1 • Full start: 25 March 2026, 04:00 UTC (EU reset).
 local SEASON_START = time({ year = 2026, month = 3, day = 25, hour = 4, min = 0, sec = 0 })
 
 -- ── Helpers ─────────────────────────────────────────────────────────────────
