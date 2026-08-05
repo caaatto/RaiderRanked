@@ -231,8 +231,12 @@ local function CreateRankFrame()
             }
             ApplyTooltipSide(DesiredSide())
         elseif newState == "frame" then
+            local regionLbl  = RR.CUTOFF_REGION_LABELS[RR.db.cutoffRegion]   or RR.db.cutoffRegion
+            local factionLbl = RR.CUTOFF_FACTION_LABELS[RR.db.cutoffFaction] or RR.db.cutoffFaction
             tooltipLines = {
                 { text = "RaiderRanked", r = 0, g = 0.8, b = 1 },
+                { text = "Cutoff: " .. regionLbl .. " \194\183 " .. factionLbl,
+                  r = 0.85, g = 0.85, b = 0.55 },
                 { text = "Left-click to show group ranks", r = 1, g = 1, b = 1 },
                 { text = RR.db.frameLocked and "Frame locked (click lock icon to unlock)"
                     or "Left-drag to move", r = 0.7, g = 0.7, b = 0.7 },
@@ -290,6 +294,14 @@ local function CreateRankFrame()
     scoreText:SetJustifyH("LEFT")
     scoreText:SetWordWrap(false)
     f.scoreText = scoreText
+
+    -- Cutoff indicator — tiny muted text bottom-right, e.g. "EU · Horde".
+    -- Reflects which Raider.IO cutoff set drives the current rank brackets.
+    local cutoffText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    cutoffText:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -8, 4)
+    cutoffText:SetJustifyH("RIGHT")
+    cutoffText:SetTextColor(0.55, 0.55, 0.6)
+    f.cutoffText = cutoffText
 
     -- Left-click toggles group panel; right-click hides frame.
     f:SetScript("OnMouseDown", function() didDrag = false end)
@@ -378,6 +390,11 @@ local function CreateGroupPanel()
     })
     p:SetBackdropColor(0, 0, 0, 0.85)
     p:EnableMouse(true)  -- prevent click-through
+
+    -- No cutoff indicator here on purpose: the rank frame directly above
+    -- already carries it, and a second copy sat inside the member list where
+    -- it read as if it belonged to a player row.
+
     p:Hide()
     return p
 end
@@ -528,6 +545,12 @@ function RR:UpdateRankFrame()
     rankFrame.scoreText:SetText(
         ColorHex(scoreColor[1] or c.r, scoreColor[2] or c.g, scoreColor[3] or c.b)
         .. label .. "|r")
+
+    if rankFrame.cutoffText then
+        local r = RR.CUTOFF_REGION_SHORT[self.db.cutoffRegion]   or self.db.cutoffRegion
+        local f = RR.CUTOFF_FACTION_SHORT[self.db.cutoffFaction] or self.db.cutoffFaction
+        rankFrame.cutoffText:SetText(r .. " \194\183 " .. f)
+    end
 end
 
 --- Public: show or hide the rank frame.
@@ -1264,6 +1287,21 @@ function RR:RegisterSettings()
         function() return self.db.showUnitWings ~= false end,
         function(val) self.db.showUnitWings = val; self:UpdateAllUnitWings() end)
 
+    AddCheckbox("animUnlocked",
+        "Unlock rank-up pop-up position",
+        "Show a drag handle for the rank-up pop-up so you can place it anywhere. "
+            .. "Right-click the box to save, Escape to discard. Also available as "
+            .. "/rr animpos; /rr animpos reset restores the default.",
+        function() return self.db.animUnlocked end,
+        function(val) self:ToggleAnimMover(val) end)
+
+    AddCheckbox("historyClassColors",
+        "Class colours in score history",
+        "Colour each character's line in the score history graph by its class "
+            .. "instead of the default palette.",
+        function() return self.db.historyClassColors end,
+        function(val) self.db.historyClassColors = val; self:RefreshHistoryGraph() end)
+
     -- History graph button — removed from settings layout to avoid ShouldShow errors.
     -- Use right-click on minimap button or /rr history instead.
 
@@ -1272,6 +1310,54 @@ function RR:RegisterSettings()
         "Show the RaiderRanked button on the minimap.",
         function() return not self.db.minimap.hide end,
         function(val) self:ToggleMinimapButton(val) end)
+
+    -- ── Region × Faction cutoff dropdowns ────────────────────────────────
+    -- Selects which Raider.IO cutoff set drives the rank thresholds.
+    -- Requires Settings.CreateDropdown (TWW+). Silently skipped on older
+    -- builds; users can still switch via /rr cutoff.
+    if Settings.CreateDropdown then
+        local regionSetting = Settings.RegisterProxySetting(
+            category,
+            "RAIDERRANKED_CUTOFF_REGION",
+            Settings.VarType.String,
+            "Cutoff region",
+            "eu",
+            function() return self.db.cutoffRegion or "eu" end,
+            function(val) self:SwitchCutoffSelection(val, nil) end)
+
+        local function RegionOptions()
+            local c = Settings.CreateControlTextContainer()
+            for _, r in ipairs(RR.CUTOFF_REGIONS) do
+                c:Add(r, RR.CUTOFF_REGION_LABELS[r] or r)
+            end
+            return c:GetData()
+        end
+
+        Settings.CreateDropdown(
+            category, regionSetting, RegionOptions,
+            "Which region's M+ rating population determines your rank brackets. \"All Regions\" merges US and EU populations.")
+
+        local factionSetting = Settings.RegisterProxySetting(
+            category,
+            "RAIDERRANKED_CUTOFF_FACTION",
+            Settings.VarType.String,
+            "Cutoff faction",
+            "all",
+            function() return self.db.cutoffFaction or "all" end,
+            function(val) self:SwitchCutoffSelection(nil, val) end)
+
+        local function FactionOptions()
+            local c = Settings.CreateControlTextContainer()
+            for _, f in ipairs(RR.CUTOFF_FACTIONS) do
+                c:Add(f, RR.CUTOFF_FACTION_LABELS[f] or f)
+            end
+            return c:GetData()
+        end
+
+        Settings.CreateDropdown(
+            category, factionSetting, FactionOptions,
+            "Faction-specific cutoff. The M+ Hero title is awarded per faction, so Horde/Alliance often have different 0.1% cutoffs.")
+    end
 
     Settings.RegisterAddOnCategory(category)
     self.settingsCategory = category

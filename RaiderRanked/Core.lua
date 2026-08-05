@@ -8,6 +8,8 @@ local ADDON_NAME, RR = ...
 -- Exposed on RR so UI.lua can read defaults for the Settings panel.
 RR.DB_DEFAULTS = {
     thresholds    = nil,  -- populated from RR:GetDefaultThresholds() on first load
+    cutoffRegion  = "eu",   -- one of RR.CUTOFF_REGIONS  (eu | us | all)
+    cutoffFaction = "all",  -- one of RR.CUTOFF_FACTIONS (all | horde | alliance)
     showInTooltip = true,
     showFrame     = true,
     showWings     = true,
@@ -17,6 +19,11 @@ RR.DB_DEFAULTS = {
     framePosition = { point = "CENTER", x = 0, y = -200 },
     frameLocked   = false,
     lastRankId    = nil,  -- DEPRECATED: migrated to per-char charRanks[key]
+    -- Rank-up pop-up: y = 90 reproduces the old hard-coded placement.
+    animPosition  = { point = "CENTER", x = 0, y = 90 },
+    animUnlocked  = false,  -- drag handle visible; reset to false every login
+    -- Score history
+    historyClassColors = false,  -- colour character lines by class instead of palette
     -- PvP
     pvpThresholds     = nil,
     showPvPFrame      = false,  -- opt-in via Settings
@@ -100,12 +107,24 @@ function RR:OnAddonLoaded()
     if RaiderRankedDB.showMinimap == false then
         RaiderRankedDB.minimap.hide = true
     end
+    -- Validate cutoff selection — saved values could be stale or corrupt.
+    if not (self.CUTOFFS and self.CUTOFFS[RaiderRankedDB.cutoffRegion]
+            and self.CUTOFFS[RaiderRankedDB.cutoffRegion][RaiderRankedDB.cutoffFaction]) then
+        RaiderRankedDB.cutoffRegion  = "eu"
+        RaiderRankedDB.cutoffFaction = "all"
+    end
+
+    -- self.db needs to be assigned before GetDefaultThresholds() since it
+    -- now resolves defaults from RR.CUTOFFS[db.cutoffRegion][db.cutoffFaction].
+    self.db = RaiderRankedDB
+
     if not RaiderRankedDB.thresholds then
         RaiderRankedDB.thresholds = self:GetDefaultThresholds()
     end
 
-    -- Auto-update saved thresholds when code defaults change (addon update).
-    -- Only overwrites values the user hasn't manually customised via /rr set.
+    -- Auto-update saved thresholds when code defaults change (addon update or
+    -- region/faction switch). Only overwrites values the user hasn't
+    -- manually customised via /rr set.
     local defaults = self:GetDefaultThresholds()
     local saved    = RaiderRankedDB.thresholds
     local oldDefaults = RaiderRankedDB.thresholdDefaults or {}
@@ -129,7 +148,7 @@ function RR:OnAddonLoaded()
         RaiderRankedDB.pvpThresholds = self:GetDefaultPvPThresholds()
     end
 
-    self.db = RaiderRankedDB
+    self:ApplyCutoffSelection()
     self:ApplyThresholds(self.db.thresholds)
     self:ApplyPvPThresholds(self.db.pvpThresholds)
     self:InitScoreHistory()
@@ -140,6 +159,10 @@ function RR:OnAddonLoaded()
     if not self.db.charRanks then
         self.db.charRanks = {}
     end
+
+    -- The pop-up drag handle is a positioning aid, never a persistent overlay.
+    -- Reset before RegisterSettings so its checkbox starts unchecked.
+    self.db.animUnlocked = false
 
     -- Settings panel must be registered during ADDON_LOADED (before UI is built).
     local ok, err = pcall(function() self:RegisterSettings() end)
@@ -165,6 +188,43 @@ function RR:OnEnteringWorld()
 
     -- Small delay: score API may not be populated immediately on zone-in.
     C_Timer.After(2, function() RR:RefreshPlayerRank() end)
+end
+
+-- ── Cutoff selection (Region × Faction) ─────────────────────────────────────
+
+--- Switches the active cutoff region/faction and migrates thresholds.
+--- Values that still match the previously active defaults are updated to
+--- the new defaults; user-customised values (/rr set) stay put.
+---@param region string|nil   nil keeps current
+---@param faction string|nil  nil keeps current
+function RR:SwitchCutoffSelection(region, faction)
+    region  = region  or self.db.cutoffRegion
+    faction = faction or self.db.cutoffFaction
+    if not (self.CUTOFFS[region] and self.CUTOFFS[region][faction]) then
+        return false
+    end
+    if region == self.db.cutoffRegion and faction == self.db.cutoffFaction then
+        return true
+    end
+
+    local oldDefaults = self.db.thresholdDefaults or self:GetDefaultThresholds()
+    self.db.cutoffRegion  = region
+    self.db.cutoffFaction = faction
+    local newDefaults = self:GetDefaultThresholds()
+
+    for id, newVal in pairs(newDefaults) do
+        if self.db.thresholds[id] == oldDefaults[id] then
+            self.db.thresholds[id] = newVal
+        end
+    end
+    self.db.thresholdDefaults = newDefaults
+
+    self:ApplyCutoffSelection()
+    self:ApplyThresholds(self.db.thresholds)
+    if self.RefreshPlayerRank then self:RefreshPlayerRank() end
+    if self.UpdateRankFrame then self:UpdateRankFrame() end
+    if self.RefreshGroupPanel then self:RefreshGroupPanel() end
+    return true
 end
 
 -- ── Score lookup ─────────────────────────────────────────────────────────────
@@ -365,6 +425,22 @@ function RR:HandleSlashCommand(msg)
             print("|cff00ccffRaiderRanked|r Unknown rank id: " .. rankId)
         end
 
+    -- Must be tested before the "anim" branch below, which would otherwise
+    -- swallow "animpos" and treat "pos" as a rank id.
+    elseif msg:match("^animpos") then
+        local arg = msg:match("^animpos%s*(%S*)$")
+        if arg == "reset" then
+            self:ResetAnimPosition()
+        else
+            self:ToggleAnimMover()
+        end
+
+    elseif msg == "classcolors" then
+        self.db.historyClassColors = not self.db.historyClassColors
+        print(string.format("|cff00ccffRaiderRanked|r History class colours: %s",
+            self.db.historyClassColors and "|cff00ff00ON|r" or "|cffff0000OFF|r"))
+        self:RefreshHistoryGraph()
+
     elseif msg:match("^anim%s*(.*)$") then
         -- /rr anim [FROM] TO  — e.g. "/rr anim bronze emerald"
         local args = msg:match("^anim%s*(.*)$")
@@ -393,13 +469,33 @@ function RR:HandleSlashCommand(msg)
     elseif msg == "debug" then
         self:DebugScore()
 
+    elseif msg == "groupdbg" then
+        self:DebugGroupChannel()
+
     elseif msg == "test" then
         self:RunTests()
 
     elseif msg == "reset" then
         self.db.thresholds = self:GetDefaultThresholds()
+        self:ApplyCutoffSelection()
         self:ApplyThresholds(self.db.thresholds)
+        self.db.thresholdDefaults = self:GetDefaultThresholds()
         print("|cff00ccffRaiderRanked|r Thresholds reset to defaults.")
+
+    elseif msg:match("^cutoff%s+%S+%s+%S+$") then
+        local r, f = msg:match("^cutoff%s+(%S+)%s+(%S+)$")
+        if self:SwitchCutoffSelection(r, f) then
+            print(string.format("|cff00ccffRaiderRanked|r Cutoff: %s / %s",
+                self.CUTOFF_REGION_LABELS[r] or r,
+                self.CUTOFF_FACTION_LABELS[f] or f))
+        else
+            print("|cff00ccffRaiderRanked|r Unknown region/faction. Valid: eu|us|all  all|horde|alliance")
+        end
+
+    elseif msg == "cutoff" then
+        print(string.format("|cff00ccffRaiderRanked|r Active cutoff: %s / %s",
+            self.CUTOFF_REGION_LABELS[self.db.cutoffRegion] or self.db.cutoffRegion,
+            self.CUTOFF_FACTION_LABELS[self.db.cutoffFaction] or self.db.cutoffFaction))
 
     elseif msg == "ranks" then
         print("|cff00ccffRaiderRanked|r Current M+ thresholds:")
@@ -452,13 +548,19 @@ function RR:HandleSlashCommand(msg)
         print("  /rr tooltip     – toggle tooltip display")
         print("  /rr ranks       – list current thresholds")
         print("  /rr set <ID> <score>  – e.g. /rr set CHALLENGER 3500")
+        print("  /rr cutoff              – show active region/faction")
+        print("  /rr cutoff <region> <faction>  – eu|us|all  all|horde|alliance")
         print("  /rr reset       – restore default thresholds")
         print("  /rr anim [from] to – preview rank-up animation")
+        print("  /rr animpos        – move rank-up pop-up (right-click save, Esc discard)")
+        print("  /rr animpos reset  – restore default pop-up position")
         print("  /rr wings <size>   – resize portrait wings (default 160)")
         print("  /rr wingsdbg       – debug wings anchor/visibility")
         print("  /rr history     – toggle score history graph")
         print("  /rr history clear – clear all history data")
+        print("  /rr classcolors – toggle class colours in the history graph")
         print("  /rr debug       – dump raw score API output")
+        print("  /rr groupdbg    – dump party categories + broadcast channel")
         print("  /rr pvp             – toggle PvP rank frame")
         print("  /rr pvpranks    – list PvP rank thresholds")
         print("  /rr pvpdebug    – dump PvP rating per bracket")

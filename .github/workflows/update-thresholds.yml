@@ -3,7 +3,12 @@ name: Update Thresholds
 on:
   schedule:
     - cron: '0 0 * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Release even if the thresholds did not change (for code-only builds)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -37,39 +42,100 @@ jobs:
       - name: Check for changes
         id: diff
         run: |
-          if git diff --quiet RaiderRanked/RankSystem.lua RaiderRanked/ScoreHistory.lua scripts/state.json; then
+          FILES="RaiderRanked/RankSystem.lua RaiderRanked/ScoreHistory.lua scripts/state.json"
+          # Plain "&&" would return 1 here and abort the step under bash -e.
+          if [ -f RaiderRanked/Cutoffs.lua ]; then
+            FILES="$FILES RaiderRanked/Cutoffs.lua"
+          fi
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+          if git diff --quiet -- $FILES; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "No threshold or season changes, skipping upload."
+            echo "No threshold or season changes."
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            git diff --stat RaiderRanked/RankSystem.lua RaiderRanked/ScoreHistory.lua scripts/state.json
+            git diff --stat -- $FILES
           fi
 
-      - name: Commit updated thresholds
-        if: steps.diff.outputs.changed == 'true'
+          # A manual dispatch can ship a code-only build that touched no thresholds.
+          if ! git diff --quiet -- $FILES || [ "${{ inputs.force_release }}" = "true" ]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping upload."
+          fi
+
+      # The TOC's "## Version" is the single source of truth. Bump the minor by
+      # hand when shipping a feature (1.11.4 -> 1.12.0); every automated release
+      # increments the last component from wherever that leaves it.
+      - name: Bump addon version
+        if: steps.diff.outputs.release == 'true'
+        id: version
+        run: |
+          python3 - <<'PY'
+          import os, re, pathlib
+
+          toc = pathlib.Path("RaiderRanked/RaiderRanked.toc")
+          # Bytes, not read_text: the TOC is CRLF and read_text(newline=...)
+          # only exists from 3.13 on, so this keeps the line endings intact.
+          raw = toc.read_bytes().decode("utf-8")
+
+          m = re.search(r"^## Version:[ \t]*(.+?)[ \t]*\r?$", raw, re.M)
+          if not m:
+              raise SystemExit("no '## Version:' line in RaiderRanked.toc")
+
+          parts = m.group(1).split(".")
+          major = parts[0]
+          minor = parts[1] if len(parts) > 1 else "0"
+          patch = int(parts[2]) + 1 if len(parts) > 2 and parts[2].isdigit() else 1
+          new = f"{major}.{minor}.{patch}"
+
+          # Splice over the captured version only, so the line ending survives.
+          start, end = m.span(1)
+          toc.write_bytes((raw[:start] + new + raw[end:]).encode("utf-8"))
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"version={new}\n")
+          print(f"version: {m.group(1)} -> {new}")
+          PY
+
+      - name: Commit and tag
+        if: steps.diff.outputs.release == 'true'
         id: commit
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           git config user.name "Catto"
           git config user.email "info@catto.at"
-          git add RaiderRanked/RankSystem.lua RaiderRanked/ScoreHistory.lua scripts/state.json
-          git commit -m "update thresholds $(date -u +'%Y-%m-%d')"
+          git add ${{ steps.diff.outputs.files }} RaiderRanked/RaiderRanked.toc
+
+          if [ "${{ steps.diff.outputs.changed }}" = "true" ]; then
+            MSG="update thresholds $(date -u +'%Y-%m-%d') (v${VERSION})"
+          else
+            MSG="release v${VERSION}"
+          fi
+
+          git commit -m "$MSG"
+          git tag "v${VERSION}"
           echo "hash=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-          echo "msg=$(git log -1 --format=%s)" >> "$GITHUB_OUTPUT"
-          git push
+          echo "msg=$MSG" >> "$GITHUB_OUTPUT"
+          git push origin HEAD
+          git push origin "v${VERSION}"
 
       - name: Package addon
-        if: steps.diff.outputs.changed == 'true'
+        if: steps.diff.outputs.release == 'true'
         run: |
           zip -r RaiderRanked.zip RaiderRanked/ \
             -x "RaiderRanked/Tools/*" "RaiderRanked/Debug/*" "RaiderRanked/tests/*"
 
       - name: Upload to CurseForge
-        if: steps.diff.outputs.changed == 'true'
+        if: steps.diff.outputs.release == 'true'
         env:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           CHANGELOG=$(cat <<EOF
-          Threshold Update
+          Raider Ranked ${VERSION}
           Author: Catto <info@catto.at>
           Date: $(date -u +'%A, %B %d, %Y, %H:%M UTC')
           commit ${{ steps.commit.outputs.hash }}
@@ -79,8 +145,9 @@ jobs:
 
           METADATA=$(jq -cn \
             --arg cl "$CHANGELOG" \
+            --arg v "$VERSION" \
             --argjson gv "[${{ vars.CF_GAME_VERSIONS }}]" \
-            '{changelog: $cl, changelogType: "text", displayName: "Raider Ranked", gameVersions: $gv, releaseType: "release"}')
+            '{changelog: $cl, changelogType: "text", displayName: ("Raider Ranked " + $v), gameVersions: $gv, releaseType: "release"}')
 
           curl -f -X POST \
             "https://wow.curseforge.com/api/projects/${{ vars.CF_PROJECT_ID }}/upload-file" \

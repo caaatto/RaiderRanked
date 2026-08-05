@@ -30,7 +30,7 @@ local ALT_COLORS = {
     { r = 1.00, g = 0.35, b = 0.35 },  -- red
 }
 
--- MN Season 1 start: 25 March 2026, 04:00 UTC (EU reset).
+-- MN Season 1 • Full start: 25 March 2026, 04:00 UTC (EU reset).
 local SEASON_START = time({ year = 2026, month = 3, day = 25, hour = 4, min = 0, sec = 0 })
 
 -- ── Helpers ─────────────────────────────────────────────────────────────────
@@ -45,6 +45,47 @@ end
 local function ShortCharName(key)
     -- "Name-Realm" → "Name"
     return key and key:match("^([^%-]+)") or key
+end
+
+-- ── Class colours ───────────────────────────────────────────────────────────
+-- Opt-in (db.historyClassColors): colour each character's line by its class
+-- instead of the ALT_COLORS palette.  A class is only known for characters that
+-- have been logged into since the addon started recording it, so anything
+-- unknown falls back to the palette — the graph never loses a line over it.
+
+--- Stores the current character's class token so alts can be coloured later.
+local function RecordClass()
+    local key = CharKey()
+    if not key or not RR.db then return end
+    local _, classFile = UnitClass("player")
+    if not classFile then return end
+    RR.db.charClass = RR.db.charClass or {}
+    RR.db.charClass[key] = classFile
+end
+
+--- Class colour for a stored character key, or nil if unknown.
+---@return table|nil color  { r = number, g = number, b = number }
+local function ClassColor(key)
+    local classFile = RR.db and RR.db.charClass and RR.db.charClass[key]
+    if not classFile then return nil end
+    -- CUSTOM_CLASS_COLORS is set by ClassColors-style addons; respect it.
+    local palette = CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS
+    local c = palette and palette[classFile]
+    if not c then return nil end
+    return { r = c.r, g = c.g, b = c.b }
+end
+
+--- Resolves a character's line/label colour.
+---@param key string        "Name-Realm"
+---@param altIdx number     palette index used when no class colour applies
+---@param rankColor table|nil colour for the current char when class colours are off
+local function CharLineColor(key, altIdx, rankColor)
+    if RR.db and RR.db.historyClassColors then
+        local c = ClassColor(key)
+        if c then return c end
+    end
+    if rankColor then return rankColor end
+    return ALT_COLORS[(altIdx % #ALT_COLORS) + 1]
 end
 
 -- ── Initialisation ──────────────────────────────────────────────────────────
@@ -76,6 +117,18 @@ function RR:InitScoreHistory()
     local key = CharKey()
     if key and not self.db.charHistory[key] then
         self.db.charHistory[key] = {}
+    end
+
+    -- Remember this character's class for the class-colour option.
+    RecordClass()
+
+    -- Drop class entries for characters whose history is gone.
+    if self.db.charClass then
+        for k in pairs(self.db.charClass) do
+            if not self.db.charHistory[k] then
+                self.db.charClass[k] = nil
+            end
+        end
     end
 
     -- Visible chars: default to only current char.
@@ -410,9 +463,9 @@ local function BuildCharDropdown()
 
             local c
             if isActive then
-                c = { r = 0.2, g = 1.0, b = 0.4 }
+                c = CharLineColor(key, 0, { r = 0.2, g = 1.0, b = 0.4 })
             else
-                c = ALT_COLORS[(altIdx % #ALT_COLORS) + 1]
+                c = CharLineColor(key, altIdx, nil)
                 altIdx = altIdx + 1
             end
 
@@ -1212,19 +1265,20 @@ function RR:RefreshHistoryGraph()
         elseif isProgressMode then
             DrawLineChart(visData, MapX, MapY, cds.color, nil)
         elseif not isCompare then
-            -- Solo: filled area chart in current rank colour.
+            -- Solo: filled area chart in current rank colour (or class colour).
             local lastScore = cds.data[#cds.data][2]
             local rank = self:GetRankForScore(lastScore)
-            DrawSoloChart(visData, MapX, MapY, rank.color)
+            DrawSoloChart(visData, MapX, MapY,
+                CharLineColor(cds.key, 0, rank.color))
         else
             -- Compare: line only, distinct colour per char.
             local color
             if cds.isCurrent then
                 local lastScore = cds.data[#cds.data][2]
                 local rank = self:GetRankForScore(lastScore)
-                color = rank.color
+                color = CharLineColor(cds.key, 0, rank.color)
             else
-                color = ALT_COLORS[(altIdx % #ALT_COLORS) + 1]
+                color = CharLineColor(cds.key, altIdx, nil)
                 altIdx = altIdx + 1
             end
             DrawLineChart(visData, MapX, MapY, color, ShortCharName(cds.key))

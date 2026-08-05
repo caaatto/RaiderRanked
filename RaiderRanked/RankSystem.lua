@@ -3,9 +3,13 @@
 
 local ADDON_NAME, RR = ...
 
--- Score thresholds (minScore / wingScore) below are auto-patched daily by
--- .github/workflows/update-thresholds.yml from the current Raider.IO M+ rankings
--- (EU, all classes/roles). Do not edit by hand — changes will be overwritten.
+-- Score thresholds (minScore / wingScore) below are seed values only. The
+-- active values are loaded from Cutoffs.lua at login via
+-- RR:ApplyCutoffSelection(), driven by the region/faction dropdowns in
+-- the Settings panel (stored in db.cutoffRegion / db.cutoffFaction).
+-- Cutoffs.lua is auto-patched daily from Raider.IO rankings. Do not edit
+-- the seed values below by hand — they are only a fallback for the first
+-- frame before Cutoffs.lua has been consulted.
 --
 -- wingScore = midpoint of each bracket. Below midpoint → plain border (Boss-Gold).
 -- At or above midpoint → winged border (Boss-Gold-Winged).
@@ -42,8 +46,8 @@ RR.RANKS = {
     {
         id        = "CHALLENGER",
         name      = "Challenger",
-        minScore  = 3617,
-        wingScore = 3658,   -- always winged
+        minScore  = 4209,
+        wingScore = 4253,   -- always winged
         -- Wings use a gold→ice-blue gradient (see UI.lua ApplyWingsColor).
         -- This color is used for text, glow, and HUD elements.
         color     = { r = 1.000, g = 0.820, b = 0.000 },
@@ -57,8 +61,8 @@ RR.RANKS = {
     {
         id        = "GRANDMASTER",
         name      = "Grandmaster",
-        minScore  = 3532,
-        wingScore = 3554,
+        minScore  = 4062,
+        wingScore = 4118,
         color     = { r = 1.000, g = 0.180, b = 0.180 },
         icon      = MEDIA .. "Ranks\\grandmaster.png",
         emblem    = MEDIA .. "Emblems\\emblem-grandmaster.png",
@@ -70,8 +74,8 @@ RR.RANKS = {
     {
         id        = "MASTER",
         name      = "Master",
-        minScore  = 3408,
-        wingScore = 3446,
+        minScore  = 3966,
+        wingScore = 4013,
         color     = { r = 0.720, g = 0.220, b = 1.000 },
         icon      = MEDIA .. "Ranks\\master.png",
         emblem    = MEDIA .. "Emblems\\emblem-master.png",
@@ -83,8 +87,8 @@ RR.RANKS = {
     {
         id        = "DIAMOND",
         name      = "Diamond",
-        minScore  = 3205,
-        wingScore = 3288,
+        minScore  = 3657,
+        wingScore = 3773,
         color     = { r = 0.120, g = 0.420, b = 1.000 },
         icon      = MEDIA .. "Ranks\\diamond.png",
         emblem    = MEDIA .. "Emblems\\emblem-diamond.png",
@@ -96,8 +100,8 @@ RR.RANKS = {
     {
         id        = "EMERALD",
         name      = "Emerald",
-        minScore  = 3062,
-        wingScore = 3121,
+        minScore  = 3467,
+        wingScore = 3548,
         color     = { r = 0.040, g = 0.880, b = 0.420 },
         icon      = MEDIA .. "Ranks\\emerald.png",
         emblem    = MEDIA .. "Emblems\\emblem-emerald.png",
@@ -109,8 +113,8 @@ RR.RANKS = {
     {
         id        = "PLATINUM",
         name      = "Platinum",
-        minScore  = 2794,
-        wingScore = 2951,
+        minScore  = 3168,
+        wingScore = 3335,
         color     = { r = 0.000, g = 0.580, b = 0.720 },
         icon      = MEDIA .. "Ranks\\platinum.png",
         emblem    = MEDIA .. "Emblems\\emblem-platinum.png",
@@ -122,8 +126,8 @@ RR.RANKS = {
     {
         id        = "GOLD",
         name      = "Gold",
-        minScore  = 2548,
-        wingScore = 2667,
+        minScore  = 2822,
+        wingScore = 3018,
         color     = { r = 1.000, g = 0.780, b = 0.000 },
         icon      = MEDIA .. "Ranks\\gold.png",
         emblem    = MEDIA .. "Emblems\\emblem-gold.png",
@@ -135,8 +139,8 @@ RR.RANKS = {
     {
         id        = "SILVER",
         name      = "Silver",
-        minScore  = 1313,
-        wingScore = 2092,
+        minScore  = 1726,
+        wingScore = 2522,
         color     = { r = 0.780, g = 0.880, b = 1.000 },
         icon      = MEDIA .. "Ranks\\silver.png",
         emblem    = MEDIA .. "Emblems\\emblem-silver.png",
@@ -148,8 +152,8 @@ RR.RANKS = {
     {
         id        = "BRONZE",
         name      = "Bronze",
-        minScore  = 353,
-        wingScore = 794,
+        minScore  = 426,
+        wingScore = 1013,
         color     = { r = 0.920, g = 0.500, b = 0.060 },
         icon      = MEDIA .. "Ranks\\bronze.png",
         emblem    = MEDIA .. "Emblems\\emblem-bronze.png",
@@ -162,7 +166,7 @@ RR.RANKS = {
         id        = "IRON",
         name      = "Iron",
         minScore  = 1,
-        wingScore = 185,
+        wingScore = 232,
         color     = { r = 0.600, g = 0.600, b = 0.650 },
         icon      = MEDIA .. "Ranks\\iron.png",
         emblem    = MEDIA .. "Emblems\\emblem-iron.png",
@@ -193,16 +197,16 @@ end
 
 -- ── Top 100 threshold ─────────────────────────────────────────────────────
 -- Updated periodically. Players at or above this score get a special aura.
-RR.TOP_100_SCORE = 3763
+RR.TOP_100_SCORE = 4347
 
 --- Returns true if the given score qualifies for Top 100.
 function RR:IsTop100(score)
     return score and score >= self.TOP_100_SCORE
 end
 
--- Snapshot of original code-defined thresholds, captured before any SavedVariables
--- override can mutate RR.RANKS. GetDefaultThresholds() reads from here so that
--- /rr reset always restores the values from this file, not from a mutated RANKS table.
+-- Fallback snapshot of file-load minScore values, used only when Cutoffs.lua
+-- or db.cutoffRegion/Faction are not yet available (first frame, tests).
+-- For normal operation GetDefaultThresholds() reads from RR.CUTOFFS.
 RR.RANK_SCORE_DEFAULTS = {}
 for _, rank in ipairs(RR.RANKS) do
     RR.RANK_SCORE_DEFAULTS[rank.id] = rank.minScore
@@ -275,15 +279,46 @@ function RR:FormatRankName(rank, score)
         name)
 end
 
---- Returns the default score thresholds as a copy (used for DB initialisation and /rr reset).
---- Reads from RANK_SCORE_DEFAULTS (snapshot taken at file-load time) so that
---- SavedVariables overrides to RANKS.minScore don't corrupt the reset baseline.
+--- Returns the active minScore defaults (used for DB initialisation and /rr reset).
+--- Reads from RR.CUTOFFS for the current db.cutoffRegion / db.cutoffFaction; falls
+--- back to the file-load snapshot if Cutoffs.lua or db isn't ready yet.
 function RR:GetDefaultThresholds()
+    local region  = self.db and self.db.cutoffRegion  or "eu"
+    local faction = self.db and self.db.cutoffFaction or "all"
+    local set = self.CUTOFFS and self:GetCutoffSet(region, faction) or nil
     local t = {}
-    for id, score in pairs(self.RANK_SCORE_DEFAULTS) do
-        t[id] = score
+    if set then
+        for id, _ in pairs(self.RANK_SCORE_DEFAULTS) do
+            local entry = set[id]
+            t[id] = (entry and entry.minScore) or self.RANK_SCORE_DEFAULTS[id]
+        end
+    else
+        for id, score in pairs(self.RANK_SCORE_DEFAULTS) do
+            t[id] = score
+        end
     end
     return t
+end
+
+--- Applies the wingScore and TOP_100_SCORE values from the selected cutoff
+--- set to RR.RANKS and RR.TOP_100_SCORE. minScore is not touched here —
+--- that goes through ApplyThresholds so user overrides (/rr set) are
+--- preserved. Call this whenever db.cutoffRegion / db.cutoffFaction
+--- changes, followed by ApplyThresholds(db.thresholds).
+function RR:ApplyCutoffSelection()
+    local region  = (self.db and self.db.cutoffRegion)  or "eu"
+    local faction = (self.db and self.db.cutoffFaction) or "all"
+    local set = self:GetCutoffSet(region, faction)
+    if not set then return end
+    for _, rank in ipairs(self.RANKS) do
+        local entry = set[rank.id]
+        if entry and entry.wingScore then
+            rank.wingScore = entry.wingScore
+        end
+    end
+    if set.top100Score then
+        self.TOP_100_SCORE = set.top100Score
+    end
 end
 
 --- Applies saved threshold overrides from the database.

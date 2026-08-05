@@ -163,11 +163,16 @@ local function Build()
     bg:SetColorTexture(0, 0, 0, 0)
     f.bg = bg
 
-    local ANIM_Y = 90   -- vertical centre offset (higher than default)
+    -- All animation content hangs off a movable anchor so the pop-up can be
+    -- placed anywhere (see RR:ApplyAnimPosition / RR:ToggleAnimMover).  The
+    -- outer frame stays full-screen because bg and flash cover the whole UI.
+    local anchor = CreateFrame("Frame", "RaiderRankedAnimAnchor", f)
+    anchor:SetSize(600, 600)
+    f.anchor = anchor
 
     local glow = f:CreateTexture(nil, "ARTWORK", nil, 0)
     glow:SetSize(650, 650)
-    glow:SetPoint("CENTER", 0, ANIM_Y)
+    glow:SetPoint("CENTER", anchor, "CENTER", 0, 0)
     glow:SetTexture("Interface\\Common\\Common-WhiteCircle")
     glow:SetBlendMode("ADD")
     glow:SetAlpha(0)
@@ -177,7 +182,7 @@ local function Build()
     -- ZERO AnimationGroups. TexCoord + alpha driven by OnUpdate.
     local sheetTex = f:CreateTexture(nil, "OVERLAY", nil, 1)
     sheetTex:SetSize(600, 600)
-    sheetTex:SetPoint("CENTER", 0, ANIM_Y)
+    sheetTex:SetPoint("CENTER", anchor, "CENTER", 0, 0)
     sheetTex:SetBlendMode("ADD")
     sheetTex:SetAlpha(0)
     f.sheetTex = sheetTex
@@ -186,7 +191,7 @@ local function Build()
     -- Same constraints: ZERO AnimationGroups.
     local sheetTex2 = f:CreateTexture(nil, "OVERLAY", nil, 2)
     sheetTex2:SetSize(600, 600)
-    sheetTex2:SetPoint("CENTER", 0, ANIM_Y)
+    sheetTex2:SetPoint("CENTER", anchor, "CENTER", 0, 0)
     sheetTex2:SetBlendMode("ADD")
     sheetTex2:SetAlpha(0)
     f.sheetTex2 = sheetTex2
@@ -196,7 +201,7 @@ local function Build()
     -- the fading "to" spritesheet. 600×338 preserves the 16:9 source ratio.
     local emblemTex = f:CreateTexture(nil, "OVERLAY", nil, 2)
     emblemTex:SetSize(600, 338)
-    emblemTex:SetPoint("CENTER", 0, ANIM_Y)
+    emblemTex:SetPoint("CENTER", anchor, "CENTER", 0, 0)
     emblemTex:SetBlendMode("BLEND")
     emblemTex:SetAlpha(0)
     f.emblemTex = emblemTex
@@ -268,6 +273,145 @@ local function Build()
     end)
 
     animFrame = f
+    RR:ApplyAnimPosition()
+end
+
+-- ── Pop-up position ──────────────────────────────────────────────────────────
+-- The rank-up pop-up used to sit at a hard-coded CENTER + 90px offset.  It is
+-- now user-placeable; the default below reproduces the old placement exactly.
+
+local animMover
+local moverOrigPos   -- position snapshot taken on show, restored when cancelled
+
+--- Current pop-up anchor, falling back to the default before the DB exists.
+local function AnimPos()
+    local p = RR.db and RR.db.animPosition
+    if type(p) ~= "table" or not p.point then
+        return RR.DB_DEFAULTS.animPosition
+    end
+    return p
+end
+
+--- Re-anchors the animation content (and the mover, if shown) from the DB.
+function RR:ApplyAnimPosition()
+    local p = AnimPos()
+    local function Anchor(region)
+        if not region then return end
+        region:ClearAllPoints()
+        region:SetPoint(p.point, UIParent, p.point, p.x, p.y)
+    end
+    Anchor(animFrame and animFrame.anchor)
+    Anchor(animMover)
+end
+
+--- Restores the default placement.
+function RR:ResetAnimPosition()
+    self.db.animPosition = CopyTable(self.DB_DEFAULTS.animPosition)
+    self:ApplyAnimPosition()
+    print("|cff00ccffRaiderRanked|r Rank-up pop-up position reset.")
+end
+
+local function BuildMover()
+    if animMover then return animMover end
+
+    -- Roughly the footprint of the visible content: the 600×338 emblem plus the
+    -- three labels that hang below it.  What you drag is what you get.
+    local m = CreateFrame("Frame", "RaiderRankedAnimMover", UIParent, "BackdropTemplate")
+    m:SetSize(600, 420)
+    m:SetFrameStrata("DIALOG")
+    m:SetBackdrop({
+        bgFile   = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        tile = false, edgeSize = 1,
+    })
+    m:SetBackdropColor(0, 0.8, 1, 0.12)
+    m:SetBackdropBorderColor(0, 0.8, 1, 0.8)
+    m:SetMovable(true)
+    m:EnableMouse(true)
+    m:SetClampedToScreen(true)
+    m:RegisterForDrag("LeftButton")
+    m:SetScript("OnDragStart", m.StartMoving)
+    m:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        -- Always store a CENTER offset: StartMoving may leave the frame anchored
+        -- by a different point, and the mover and the animation anchor have
+        -- different sizes — only a shared CENTER keeps them aligned.
+        local ux, uy = UIParent:GetCenter()
+        local mx, my = self:GetCenter()
+        RR.db.animPosition = { point = "CENTER", x = mx - ux, y = my - uy }
+        RR:ApplyAnimPosition()
+    end)
+
+    -- Right-click anywhere on the box locks in the current position.
+    m:SetScript("OnMouseUp", function(self, button)
+        if button == "RightButton" then RR:LockAnimMover() end
+    end)
+
+    -- Escape routes through UISpecialFrames, which just calls Hide().  OnHide
+    -- therefore treats "hidden without a commit flag" as a cancel and rolls the
+    -- position back to the snapshot taken when the box was opened.
+    m:SetScript("OnHide", function(self)
+        if not self.commit and moverOrigPos then
+            RR.db.animPosition = moverOrigPos
+            RR:ApplyAnimPosition()
+            print("|cff00ccffRaiderRanked|r Pop-up position discarded.")
+        end
+        self.commit  = nil
+        moverOrigPos = nil
+        RR.db.animUnlocked = false
+    end)
+    tinsert(UISpecialFrames, "RaiderRankedAnimMover")
+
+    local label = m:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    label:SetPoint("CENTER", m, "CENTER", 0, 20)
+    label:SetText("|cff00ccffRaiderRanked|r rank-up pop-up")
+
+    local hint = m:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    hint:SetPoint("TOP", label, "BOTTOM", 0, -8)
+    hint:SetJustifyH("CENTER")
+    hint:SetText("Left-drag to move\n"
+        .. "|cff00ff00Right-click|r to save  ·  |cffff6666Escape|r to discard\n"
+        .. "|cffaaaaaa/rr animpos reset|r restores the default")
+
+    m:Hide()
+    animMover = m
+    return m
+end
+
+--- Hides the mover, keeping wherever the box was dragged to.
+function RR:LockAnimMover()
+    if not animMover or not animMover:IsShown() then return end
+    animMover.commit = true
+    animMover:Hide()
+    print("|cff00ccffRaiderRanked|r Pop-up position saved.")
+end
+
+--- Hides the mover and restores the position it had when it was opened.
+function RR:CancelAnimMover()
+    if not animMover or not animMover:IsShown() then return end
+    animMover.commit = false
+    animMover:Hide()
+end
+
+--- Shows/hides the drag handle for the pop-up.  Pass nil to toggle.
+function RR:ToggleAnimMover(show)
+    local m = BuildMover()
+    if show == nil then show = not m:IsShown() end
+
+    if show then
+        if m:IsShown() then return end
+        -- Snapshot for the Escape rollback.
+        moverOrigPos = CopyTable(AnimPos())
+        self:ApplyAnimPosition()
+        m:Show()
+        self.db.animUnlocked = true
+        print("|cff00ccffRaiderRanked|r Pop-up unlocked — drag the box, "
+            .. "|cff00ff00right-click|r to save, |cffff6666Escape|r to discard. "
+            .. "Preview with |cffffff00/rr anim challenger|r.")
+    else
+        -- Explicit lock (slash command or settings checkbox) keeps the position.
+        self:LockAnimMover()
+    end
 end
 
 -- ── Internal: glow pulse loop ─────────────────────────────────────────────────
