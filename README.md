@@ -75,7 +75,15 @@ Thresholds are based on the current season's score distribution and updated dail
 
 ### Region and faction cutoffs
 
-Cutoffs are computed for nine combinations — `eu`, `us` and `all` (a population-weighted merge) crossed with `all`, `horde` and `alliance`. The active combination is selected in the Settings panel or via `/rr cutoff`, and the rank frame shows it as a compact subtitle (for example `EU · Alliance`).
+The M+ seasonal title is awarded by Blizzard at the top 0.1% **per faction per region**, so Horde and Alliance have different cutoffs within the same region. Cutoffs are therefore computed for all nine combinations:
+
+| Region | Faction |
+|---|---|
+| `eu` — Europe | `all` — combined |
+| `us` — North America | `horde` |
+| `all` — population-weighted merge of US + EU | `alliance` |
+
+The active combination is selected in the Settings panel (ESC → Options → AddOns → RaiderRanked) or via `/rr cutoff <region> <faction>`, and the rank frame shows it as a muted subtitle (for example `EU · Alliance`). Default is `eu / all`.
 
 Switching sets migrates your thresholds: values that still match the previous defaults follow along, values you overrode with `/rr set` stay put.
 
@@ -123,7 +131,7 @@ Broadcasts pick their channel from the party category you are actually in: `INST
 
 ## Threshold Auto-Update
 
-A daily GitHub Actions workflow fetches the M+ score distribution from Raider.IO, computes percentile cutoffs, patches `Cutoffs.lua` (all nine region × faction slots), `RankSystem.lua` (rank score thresholds and Top 100 cutoff) and `ScoreHistory.lua` (the `SEASON_START` anchor), and uploads the updated addon to CurseForge.
+A daily GitHub Actions workflow fetches the M+ score distribution from Raider.IO for each region × faction combo (EU / NA × Horde / Alliance / All, plus a synthetic population-weighted `all` region), computes percentile cutoffs, patches `Cutoffs.lua` (all nine region/faction slots), `RankSystem.lua` (seed thresholds and Top 100 cutoff) and `ScoreHistory.lua` (the `SEASON_START` anchor), and uploads the updated addon to CurseForge.
 
 Both the active expansion and the active season are auto-detected from Raider.IO's `mythic-plus/static-data` endpoint on every run, so neither season rollovers (MN1 -> MN2) nor expansion rollovers (Midnight -> next) require a code change. The next scheduled run picks up the new slug, the patcher rewrites the constants from the new `seasonStart`, and CI ships an updated build. A `scripts/state.json` tracks last-known-good population, expansion, and season for a sanity guard that refuses to overwrite a healthy build with a half-empty Raider.IO snapshot, and as a fallback when static-data is unreachable. The script lives upstream in [caaatto/raiderranked-api](https://github.com/caaatto/raiderranked-api) and is mirrored byte-identical here.
 
