@@ -9,9 +9,9 @@
 -- Regions: us | eu | all   (all = population-weighted merge of us+eu)
 -- Factions: alliance | horde | all
 --
--- Until the first multi-variant patch run lands, all 9 slots carry the
--- same snapshot (last single-region EU+all-factions compute). The
--- addon reads the active slot at login via RR:ApplyCutoffSelection().
+-- All 9 slots carry their own computed snapshot. The addon reads the
+-- active slot at login via RR:ApplyCutoffSelection(); the selection
+-- itself lives in db.cutoffRegion / db.cutoffFaction.
 
 local ADDON_NAME, RR = ...
 

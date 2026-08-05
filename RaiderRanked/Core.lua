@@ -19,6 +19,11 @@ RR.DB_DEFAULTS = {
     framePosition = { point = "CENTER", x = 0, y = -200 },
     frameLocked   = false,
     lastRankId    = nil,  -- DEPRECATED: migrated to per-char charRanks[key]
+    -- Rank-up pop-up: y = 90 reproduces the old hard-coded placement.
+    animPosition  = { point = "CENTER", x = 0, y = 90 },
+    animUnlocked  = false,  -- drag handle visible; reset to false every login
+    -- Score history
+    historyClassColors = false,  -- colour character lines by class instead of palette
     -- PvP
     pvpThresholds     = nil,
     showPvPFrame      = false,  -- opt-in via Settings
@@ -155,6 +160,10 @@ function RR:OnAddonLoaded()
         self.db.charRanks = {}
     end
 
+    -- The pop-up drag handle is a positioning aid, never a persistent overlay.
+    -- Reset before RegisterSettings so its checkbox starts unchecked.
+    self.db.animUnlocked = false
+
     -- Settings panel must be registered during ADDON_LOADED (before UI is built).
     local ok, err = pcall(function() self:RegisterSettings() end)
     if not ok then
@@ -163,6 +172,10 @@ function RR:OnAddonLoaded()
 end
 
 function RR:OnPlayerLogin()
+    -- UnitClass("player") is empty during ADDON_LOADED, so the class for the
+    -- history colours can only be recorded from here on.
+    self:RecordCharClass()
+
     local ok, err = pcall(function() self:InitUI() end)
     if not ok then
         print("|cffff0000RaiderRanked InitUI error:|r " .. tostring(err))
@@ -416,6 +429,21 @@ function RR:HandleSlashCommand(msg)
             print("|cff00ccffRaiderRanked|r Unknown rank id: " .. rankId)
         end
 
+    -- Must be tested before the "anim" branch below, which would otherwise
+    -- swallow "animpos" and treat "pos" as a rank id.
+    elseif msg:match("^animpos") then
+        local arg = msg:match("^animpos%s*(%S*)$")
+        if arg == "reset" then
+            self:ResetAnimPosition()
+        else
+            self:ToggleAnimMover()
+        end
+
+    elseif msg == "classcolors" then
+        self.db.historyClassColors = not self.db.historyClassColors
+        self:PrintClassColorState()
+        self:RefreshHistoryGraph()
+
     elseif msg:match("^anim%s*(.*)$") then
         -- /rr anim [FROM] TO  — e.g. "/rr anim bronze emerald"
         local args = msg:match("^anim%s*(.*)$")
@@ -443,6 +471,9 @@ function RR:HandleSlashCommand(msg)
 
     elseif msg == "debug" then
         self:DebugScore()
+
+    elseif msg == "groupdbg" then
+        self:DebugGroupChannel()
 
     elseif msg == "test" then
         self:RunTests()
@@ -524,11 +555,15 @@ function RR:HandleSlashCommand(msg)
         print("  /rr cutoff <region> <faction>  – eu|us|all  all|horde|alliance")
         print("  /rr reset       – restore default thresholds")
         print("  /rr anim [from] to – preview rank-up animation")
+        print("  /rr animpos        – move rank-up pop-up (right-click save, Esc discard)")
+        print("  /rr animpos reset  – restore default pop-up position")
         print("  /rr wings <size>   – resize portrait wings (default 160)")
         print("  /rr wingsdbg       – debug wings anchor/visibility")
         print("  /rr history     – toggle score history graph")
         print("  /rr history clear – clear all history data")
+        print("  /rr classcolors – toggle class colours in the history graph")
         print("  /rr debug       – dump raw score API output")
+        print("  /rr groupdbg    – dump party categories + broadcast channel")
         print("  /rr pvp             – toggle PvP rank frame")
         print("  /rr pvpranks    – list PvP rank thresholds")
         print("  /rr pvpdebug    – dump PvP rating per bracket")

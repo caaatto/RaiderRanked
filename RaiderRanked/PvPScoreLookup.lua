@@ -101,15 +101,63 @@ local function DecodePayload(payload)
     return brackets, maxCR
 end
 
-function RR:BroadcastPvPScores()
-    if not IsInGroup() and not IsInRaid() and not IsInGuild() then return end
-    local brackets = self:GetOwnPvPScores()
-    local payload = EncodePayload(brackets)
+-- Category constants; fall back to their numeric values if the globals ever go.
+local CATEGORY_HOME     = LE_PARTY_CATEGORY_HOME     or 1
+local CATEGORY_INSTANCE = LE_PARTY_CATEGORY_INSTANCE or 2
 
-    if IsInRaid() then
-        C_ChatInfo.SendAddonMessage(ADDON_PREFIX, payload, "RAID")
-    elseif IsInGroup() then
-        C_ChatInfo.SendAddonMessage(ADDON_PREFIX, payload, "PARTY")
+--- Resolves the addon-message channel for the group we are actually in.
+---
+--- IsInGroup()/IsInRaid() without a category argument check BOTH the home and
+--- the instance group, so inside a scenario, delve, LFR or battleground they
+--- return true while no home party exists.  Sending "PARTY"/"RAID" there throws
+--- ERR_NOT_IN_GROUP ("You are not in a party") — see issue #15.  Instanced
+--- groups must use "INSTANCE_CHAT", and it is checked first because a home
+--- party that zones into an instance is in both categories at once.
+---@return string|nil channel  nil when the player is not grouped at all
+local function GroupChannel()
+    if IsInGroup(CATEGORY_INSTANCE) then
+        return "INSTANCE_CHAT"
+    elseif IsInRaid(CATEGORY_HOME) then
+        return "RAID"
+    elseif IsInGroup(CATEGORY_HOME) then
+        return "PARTY"
+    end
+    return nil
+end
+RR.GetGroupChannel = GroupChannel
+
+function RR:BroadcastPvPScores()
+    local channel = GroupChannel()
+    if not channel then return end
+
+    local brackets = self:GetOwnPvPScores()
+    C_ChatInfo.SendAddonMessage(ADDON_PREFIX, EncodePayload(brackets), channel)
+end
+
+--- Dumps the raw party categories and the resolved channel, then fires one
+--- broadcast so a bad channel surfaces as a chat error straight away.
+--- The interesting case is home=false / instance=true — that is exactly where
+--- the old "PARTY"/"RAID" code produced ERR_NOT_IN_GROUP.
+function RR:DebugGroupChannel()
+    local zone, instanceType = GetInstanceInfo()
+    local channel = GroupChannel()
+
+    print("|cff00ccffRaiderRanked|r group channel debug")
+    print(string.format("  zone:     %s (instanceType=%s)",
+        tostring(zone), tostring(instanceType)))
+    print(string.format("  home:     inGroup=%s  inRaid=%s",
+        tostring(IsInGroup(CATEGORY_HOME)),     tostring(IsInRaid(CATEGORY_HOME))))
+    print(string.format("  instance: inGroup=%s  inRaid=%s",
+        tostring(IsInGroup(CATEGORY_INSTANCE)), tostring(IsInRaid(CATEGORY_INSTANCE))))
+    print(string.format("  no-category: inGroup=%s  inRaid=%s  |cff888888(what the old code used)|r",
+        tostring(IsInGroup()), tostring(IsInRaid())))
+    print(string.format("  resolved channel: |cffffff00%s|r", tostring(channel)))
+
+    if channel then
+        self:BroadcastPvPScores()
+        print("  broadcast sent — no red error above means the channel is valid.")
+    else
+        print("  not grouped, nothing sent.")
     end
 end
 
@@ -337,9 +385,7 @@ pvpFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
--- Periodic broadcast while in a group.
+-- Periodic broadcast while in a group (BroadcastPvPScores no-ops when solo).
 C_Timer.NewTicker(BROADCAST_INTERVAL, function()
-    if IsInGroup() or IsInRaid() then
-        RR:BroadcastPvPScores()
-    end
+    RR:BroadcastPvPScores()
 end)

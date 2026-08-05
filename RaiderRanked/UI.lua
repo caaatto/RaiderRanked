@@ -391,13 +391,9 @@ local function CreateGroupPanel()
     p:SetBackdropColor(0, 0, 0, 0.85)
     p:EnableMouse(true)  -- prevent click-through
 
-    -- Cutoff indicator at the top of the panel — mirrors the rank frame
-    -- subtitle so it's clear which cutoff set drives these ranks.
-    local cutoffText = p:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    cutoffText:SetPoint("BOTTOMRIGHT", p, "BOTTOMRIGHT", -8, 4)
-    cutoffText:SetJustifyH("RIGHT")
-    cutoffText:SetTextColor(0.55, 0.55, 0.6)
-    p.cutoffText = cutoffText
+    -- No cutoff indicator here on purpose: the rank frame directly above
+    -- already carries it, and a second copy sat inside the member list where
+    -- it read as if it belonged to a player row.
 
     p:Hide()
     return p
@@ -423,12 +419,6 @@ end
 
 function RR:RefreshGroupPanel()
     if not groupPanel or not groupPanel:IsShown() then return end
-
-    if groupPanel.cutoffText then
-        local r = RR.CUTOFF_REGION_SHORT[self.db.cutoffRegion]   or self.db.cutoffRegion
-        local f = RR.CUTOFF_FACTION_SHORT[self.db.cutoffFaction] or self.db.cutoffFaction
-        groupPanel.cutoffText:SetText(r .. " \194\183 " .. f)
-    end
 
     local units = GetGroupUnits()
 
@@ -1296,6 +1286,27 @@ function RR:RegisterSettings()
         "Overlay rank wings on target, focus, and party portraits.",
         function() return self.db.showUnitWings ~= false end,
         function(val) self.db.showUnitWings = val; self:UpdateAllUnitWings() end)
+
+    AddCheckbox("animUnlocked",
+        "Unlock rank-up pop-up position",
+        "Show a drag handle for the rank-up pop-up so you can place it anywhere. "
+            .. "Right-click the box to save, Escape to discard. Also available as "
+            .. "/rr animpos; /rr animpos reset restores the default.",
+        function() return self.db.animUnlocked end,
+        function(val) self:ToggleAnimMover(val) end)
+
+    AddCheckbox("historyClassColors",
+        "Class colours in score history",
+        "Colour each character's line in the score history graph by its class "
+            .. "instead of the default palette.",
+        function() return self.db.historyClassColors end,
+        function(val)
+            self.db.historyClassColors = val
+            -- Report which characters actually have a known class when turning
+            -- it on; otherwise an alt on the fallback palette looks like a bug.
+            if val then self:PrintClassColorState() else self:RecordCharClass() end
+            self:RefreshHistoryGraph()
+        end)
 
     -- History graph button — removed from settings layout to avoid ShouldShow errors.
     -- Use right-click on minimap button or /rr history instead.
