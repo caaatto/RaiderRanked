@@ -54,13 +54,22 @@ end
 -- unknown falls back to the palette — the graph never loses a line over it.
 
 --- Stores the current character's class token so alts can be coloured later.
+--- Cheap and idempotent, so it is called from several points: UnitClass()
+--- returns nothing during ADDON_LOADED, and a single call from there would
+--- silently never record anything.
 local function RecordClass()
+    if not RR.db then return end
     local key = CharKey()
-    if not key or not RR.db then return end
+    if not key then return end
     local _, classFile = UnitClass("player")
-    if not classFile then return end
+    if not classFile or classFile == "" then return end
     RR.db.charClass = RR.db.charClass or {}
     RR.db.charClass[key] = classFile
+end
+
+--- Public wrapper so Core can record the class once the player exists.
+function RR:RecordCharClass()
+    RecordClass()
 end
 
 --- Class colour for a stored character key, or nil if unknown.
@@ -86,6 +95,31 @@ local function CharLineColor(key, altIdx, rankColor)
     end
     if rankColor then return rankColor end
     return ALT_COLORS[(altIdx % #ALT_COLORS) + 1]
+end
+
+--- Prints the option state plus which characters have a known class, so a
+--- character still on the fallback palette is obvious instead of puzzling.
+function RR:PrintClassColorState()
+    RecordClass()
+
+    local known, unknown = {}, {}
+    for key in pairs(self.db.charHistory or {}) do
+        local classFile = self.db.charClass and self.db.charClass[key]
+        if classFile then
+            table.insert(known, ShortCharName(key) .. " |cff888888(" .. classFile:lower() .. ")|r")
+        else
+            table.insert(unknown, ShortCharName(key))
+        end
+    end
+    table.sort(known)
+    table.sort(unknown)
+
+    print(string.format("|cff00ccffRaiderRanked|r History class colours: %s",
+        self.db.historyClassColors and "|cff00ff00ON|r" or "|cffff0000OFF|r"))
+    print("  known:   " .. (#known > 0 and table.concat(known, ", ") or "none"))
+    print("  unknown: " .. (#unknown > 0
+        and (table.concat(unknown, ", ") .. " |cff888888— log in once on each|r")
+        or "none"))
 end
 
 -- ── Initialisation ──────────────────────────────────────────────────────────
@@ -175,6 +209,9 @@ end
 function RR:RecordScoreSnapshot()
     local key = CharKey()
     if not key or not self.db or not self.db.charHistory then return end
+
+    -- Runs well after login, so this is the reliable point to learn the class.
+    RecordClass()
     local score = self.playerScore
     if not score then return end
 

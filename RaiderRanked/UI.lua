@@ -1300,7 +1300,13 @@ function RR:RegisterSettings()
         "Colour each character's line in the score history graph by its class "
             .. "instead of the default palette.",
         function() return self.db.historyClassColors end,
-        function(val) self.db.historyClassColors = val; self:RefreshHistoryGraph() end)
+        function(val)
+            self.db.historyClassColors = val
+            -- Report which characters actually have a known class when turning
+            -- it on; otherwise an alt on the fallback palette looks like a bug.
+            if val then self:PrintClassColorState() else self:RecordCharClass() end
+            self:RefreshHistoryGraph()
+        end)
 
     -- History graph button — removed from settings layout to avoid ShouldShow errors.
     -- Use right-click on minimap button or /rr history instead.

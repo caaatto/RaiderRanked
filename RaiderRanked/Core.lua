@@ -172,6 +172,10 @@ function RR:OnAddonLoaded()
 end
 
 function RR:OnPlayerLogin()
+    -- UnitClass("player") is empty during ADDON_LOADED, so the class for the
+    -- history colours can only be recorded from here on.
+    self:RecordCharClass()
+
     local ok, err = pcall(function() self:InitUI() end)
     if not ok then
         print("|cffff0000RaiderRanked InitUI error:|r " .. tostring(err))
@@ -437,8 +441,7 @@ function RR:HandleSlashCommand(msg)
 
     elseif msg == "classcolors" then
         self.db.historyClassColors = not self.db.historyClassColors
-        print(string.format("|cff00ccffRaiderRanked|r History class colours: %s",
-            self.db.historyClassColors and "|cff00ff00ON|r" or "|cffff0000OFF|r"))
+        self:PrintClassColorState()
         self:RefreshHistoryGraph()
 
     elseif msg:match("^anim%s*(.*)$") then
