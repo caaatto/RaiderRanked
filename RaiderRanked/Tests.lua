@@ -202,6 +202,155 @@ local function runUITests()
     return s.failed
 end
 
+local function runPanelTests()
+    local s = Suite.new("Panels")
+
+    -- Every ranked tier needs a percentile band for the ladder's middle column.
+    for _, r in ipairs(RR.RANKS) do
+        if r.id ~= "UNRANKED" then
+            local band = RR.RANK_PERCENTILES[r.id]
+            s:assert("Percentile band for " .. r.id,
+                type(band) == "table" and type(band[1]) == "number" and band[2] > band[1])
+        end
+    end
+
+    -- All three views live as tabs in the score history window.
+    local wasShown = RaiderRankedHistoryFrame and RaiderRankedHistoryFrame:IsShown()
+
+    RR:ToggleRankLadder(true)
+    local f = RR.historyFrame
+    s:assert("History window exists after toggle", f ~= nil)
+    s:assert("Window is shown", f and f:IsShown())
+    s:assert("Three panes built", f and f.panes
+        and f.panes.history and f.panes.ladder and f.panes.seasons)
+    s:assert("Three tabs built", f and f.tabs and #f.tabs == 3)
+    s:eq("Ladder tab is active", f and f.activeTab, "ladder")
+    s:assert("Only the ladder pane is shown",
+        f and f.panes.ladder:IsShown()
+        and not f.panes.history:IsShown() and not f.panes.seasons:IsShown())
+    local ok = pcall(RR.RefreshRankLadder, RR)
+    s:assert("RefreshRankLadder runs without error", ok)
+
+    -- Seasons: the running season must always be present, even when empty.
+    local seasons = RR:GetSeasonArchive()
+    s:assert("GetSeasonArchive returns a list", type(seasons) == "table" and #seasons >= 1)
+    s:assert("First entry is the current season", seasons[1] and seasons[1].current == true)
+
+    RR:ToggleSeasonsPanel(true)
+    s:eq("Seasons tab is active", f and f.activeTab, "seasons")
+    local ok2 = pcall(RR.RefreshSeasonsPanel, RR)
+    s:assert("RefreshSeasonsPanel runs without error", ok2)
+
+    -- The graph must not repaint while another tab is up, or its "no data"
+    -- overlay would appear on top of that tab.
+    local ok3 = pcall(RR.RefreshHistoryGraph, RR)
+    s:assert("RefreshHistoryGraph is inert on another tab", ok3)
+
+    RR:SetHistoryTab("history")
+    s:assert("Switching back shows the graph pane",
+        f and f.panes.history:IsShown() and not f.panes.seasons:IsShown())
+
+    RR:ToggleHistoryGraph(wasShown and true or false)
+
+    s:print()
+    return s.failed
+end
+
+local function runSeasonArchiveTests()
+    local s = Suite.new("Season archive")
+
+    local seasonStart = RR:GetCurrentSeasonRecord().start
+    s:assert("Current season has a start timestamp", type(seasonStart) == "number")
+
+    -- Full threshold set so the archived ranks don't depend on whatever the
+    -- player currently has selected or overridden.
+    local T = {
+        CHALLENGER = 4000, GRANDMASTER = 3800, MASTER  = 3500, DIAMOND = 2000,
+        EMERALD    = 1800, PLATINUM    = 1500, GOLD    = 1200, SILVER  =  800,
+        BRONZE     =  400, IRON        =    1,
+    }
+
+    -- Simulate a rollover against a throwaway db so no saved data is touched.
+    local realDB    = RR.db
+    local prevStart = seasonStart - 90 * 86400
+    RR.db = {
+        seasonStart = prevStart,
+        seasonName  = "Test Season",
+        charHistory = {
+            ["Alpha-Realm"] = {
+                { prevStart + 100, 1000, T },
+                { prevStart + 200, 2500 },
+                { prevStart + 300, 2100 },
+                { seasonStart + 10,  300 },  -- already in the new season
+            },
+            ["Beta-Realm"] = {
+                { prevStart + 50, 500, T },
+            },
+        },
+        charPeak = { ["Alpha-Realm"] = 2600 },  -- higher than any surviving point
+    }
+
+    local ok = pcall(RR.ArchiveSeasonIfRolled, RR)
+    s:assert("ArchiveSeasonIfRolled runs without error", ok)
+
+    local archive = RR.db.seasonArchive
+    s:assert("One season archived", type(archive) == "table" and #archive == 1)
+    local rec = archive and archive[1]
+    local alpha = rec and rec.chars and rec.chars["Alpha-Realm"]
+    local beta  = rec and rec.chars and rec.chars["Beta-Realm"]
+
+    s:eq("Archived record keeps the old season name", rec and rec.name, "Test Season")
+    s:eq("Peak comes from the tracked peak, not the points", alpha and alpha.peak, 2600)
+    s:eq("Final is the last score of that season", alpha and alpha.final, 2100)
+    s:eq("Peak rank uses that season's thresholds", alpha and alpha.peakRank, "DIAMOND")
+    s:eq("Final rank uses that season's thresholds", alpha and alpha.finalRank, "DIAMOND")
+    s:eq("Second character archived too", beta and beta.peak, 500)
+    s:eq("Second character's rank", beta and beta.peakRank, "BRONZE")
+
+    s:eq("Old points pruned", #RR.db.charHistory["Alpha-Realm"], 1)
+    s:eq("New-season point survives", RR.db.charHistory["Alpha-Realm"][1][2], 300)
+    s:eq("seasonStart adopted", RR.db.seasonStart, seasonStart)
+    s:assert("Tracked peaks cleared", next(RR.db.charPeak) == nil)
+
+    -- Idempotent: a second login in the same season must not file it again.
+    RR:ArchiveSeasonIfRolled()
+    s:eq("Re-running does not archive twice", #RR.db.seasonArchive, 1)
+
+    -- Updated only after a rollover: no stored season, but history that
+    -- predates the current one. That is still a finished season.
+    RR.db = {
+        charHistory = {
+            ["Gamma-Realm"] = {
+                { prevStart + 10, 1900, T },
+                { seasonStart + 5, 120 },
+            },
+        },
+    }
+    RR:ArchiveSeasonIfRolled()
+    local late = RR.db.seasonArchive
+    s:eq("Pre-existing data archived on first run", late and #late, 1)
+    s:eq("Unnamed season gets a placeholder", late and late[1].name, "Earlier season")
+    s:eq("Late-update peak read from the points",
+        late and late[1].chars["Gamma-Realm"].peak, 1900)
+
+    -- Fresh install mid-season: nothing predates SEASON_START, so nothing is
+    -- filed away — the running season just gets adopted.
+    RR.db = {
+        charHistory = {
+            ["Delta-Realm"] = { { seasonStart, 0 }, { seasonStart + 5, 800, T } },
+        },
+    }
+    RR:ArchiveSeasonIfRolled()
+    s:assert("Fresh install archives nothing", RR.db.seasonArchive == nil)
+    s:eq("Fresh install adopts the season", RR.db.seasonStart, seasonStart)
+
+    RR.db = realDB
+    s:assert("Real database restored", RR.db == realDB)
+
+    s:print()
+    return s.failed
+end
+
 -- ── Entry point ───────────────────────────────────────────────────────────────
 
 function RR:RunTests()
@@ -210,6 +359,8 @@ function RR:RunTests()
     totalFailed = totalFailed + runRankSystemTests()
     totalFailed = totalFailed + runCoreTests()
     totalFailed = totalFailed + runUITests()
+    totalFailed = totalFailed + runPanelTests()
+    totalFailed = totalFailed + runSeasonArchiveTests()
     print("────────────────────────────────────────────────────")
     if totalFailed == 0 then
         print("|cff00ff00All tests passed.|r")

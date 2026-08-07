@@ -96,6 +96,12 @@ end
 function RR:CreatePvPAura()
     if not PlayerFrame then return end
 
+    -- Both layers stay children of PlayerFrame. The unit-frame overlays in
+    -- UI.lua had to move off their host to avoid tainting it, but PlayerFrame
+    -- only ever reads player data — which the 12.x secret-value protection does
+    -- not cover — so the taint costs nothing here, and being a child keeps
+    -- position, scale and draw order exactly as they were.
+
     -- Back layer: behind portrait.
     local bf = CreateFrame("Frame", nil, PlayerFrame)
     bf:SetAllPoints(PlayerFrame)
@@ -296,6 +302,7 @@ end
 function RR:CreatePveAura()
     if not PlayerFrame then return end
 
+    -- Child of PlayerFrame for the same reason as CreatePvPAura above.
     local f = CreateFrame("Frame", nil, PlayerFrame)
     f:SetAllPoints(PlayerFrame)
     f:SetFrameLevel(PlayerFrame:GetFrameLevel() + 1)

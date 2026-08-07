@@ -228,6 +228,7 @@ function RR:SwitchCutoffSelection(region, faction)
     if self.RefreshPlayerRank then self:RefreshPlayerRank() end
     if self.UpdateRankFrame then self:UpdateRankFrame() end
     if self.RefreshGroupPanel then self:RefreshGroupPanel() end
+    if self.RefreshRankLadder then self:RefreshRankLadder() end
     return true
 end
 
@@ -313,6 +314,14 @@ function RR:RefreshPlayerRank()
     -- Record score history snapshot.
     if self.RecordScoreSnapshot then
         self:RecordScoreSnapshot()
+    end
+
+    -- Both panels no-op unless they are currently open.
+    if self.RefreshRankLadder then
+        self:RefreshRankLadder()
+    end
+    if self.RefreshSeasonsPanel then
+        self:RefreshSeasonsPanel()
     end
 
     -- Animate when rank improves (skip on very first load where oldRank is nil).
@@ -466,6 +475,10 @@ function RR:HandleSlashCommand(msg)
         local unit = msg:match("^unitdbg%s*(%S*)$") or "target"
         self:DebugUnitWings(unit == "" and "target" or unit)
 
+    elseif msg:match("^wingstest") then
+        local unit = msg:match("^wingstest%s*(%S*)$") or "target"
+        self:TestUnitWings(unit == "" and "target" or unit)
+
     elseif msg:match("^wings%s+%d+$") then
         self:SetPortraitWingsSize(msg:match("^wings%s+(%d+)$"))
 
@@ -506,6 +519,13 @@ function RR:HandleSlashCommand(msg)
             print(string.format("  %s: %d+",
                 self:FormatRankName(rank), rank.minScore))
         end
+        print("  |cff888888/rr ladder shows the same list as a panel|r")
+
+    elseif msg == "ladder" then
+        self:ToggleRankLadder()
+
+    elseif msg == "seasons" then
+        self:ToggleSeasonsPanel()
 
     elseif msg == "history" then
         self:ToggleHistoryGraph()
@@ -550,6 +570,8 @@ function RR:HandleSlashCommand(msg)
         print("  /rr             – toggle rank frame")
         print("  /rr tooltip     – toggle tooltip display")
         print("  /rr ranks       – list current thresholds")
+        print("  /rr ladder      – rank ladder panel (all ranks + your position)")
+        print("  /rr seasons     – past season results per character")
         print("  /rr set <ID> <score>  – e.g. /rr set CHALLENGER 3500")
         print("  /rr cutoff              – show active region/faction")
         print("  /rr cutoff <region> <faction>  – eu|us|all  all|horde|alliance")
@@ -559,6 +581,7 @@ function RR:HandleSlashCommand(msg)
         print("  /rr animpos reset  – restore default pop-up position")
         print("  /rr wings <size>   – resize portrait wings (default 160)")
         print("  /rr wingsdbg       – debug wings anchor/visibility")
+        print("  /rr wingstest [unit] – force wings onto a target to check placement")
         print("  /rr history     – toggle score history graph")
         print("  /rr history clear – clear all history data")
         print("  /rr classcolors – toggle class colours in the history graph")

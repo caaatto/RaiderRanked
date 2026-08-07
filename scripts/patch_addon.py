@@ -5,7 +5,7 @@ Patch RaiderRanked Lua files from thresholds.json.
 Targets:
   - RaiderRanked/Cutoffs.lua     (new — 9 region/faction blocks)
   - RaiderRanked/RankSystem.lua  (seed fallback — mirrors primary region/all)
-  - RaiderRanked/ScoreHistory.lua (SEASON_START constant)
+  - RaiderRanked/ScoreHistory.lua (SEASON_START / SEASON_NAME constants)
 
 Preserves comments, whitespace, and line-by-line formatting. Skips
 wingScore = nil (UNRANKED). Cutoffs.lua sections are identified by
@@ -171,6 +171,10 @@ def patch_score_history(lua_path, season_meta):
         f"local SEASON_START = time({{ year = {dt.year}, month = {dt.month}, "
         f"day = {dt.day}, hour = {dt.hour}, min = {dt.minute}, sec = 0 }})\n"
     )
+    # Display label for the season archive. Escaped defensively — the name
+    # comes straight from Raider.IO and lands inside a Lua string literal.
+    lua_name = season_name.replace("\\", "\\\\").replace('"', '\\"')
+    new_name = f'local SEASON_NAME = "{lua_name}"\n'
 
     with open(lua_path) as f:
         lines = f.readlines()
@@ -183,6 +187,15 @@ def patch_score_history(lua_path, season_meta):
                 lines[i - 1] = new_comment
             patched = True
             break
+
+    # Separate pass: SEASON_NAME sits a few comment lines below SEASON_START,
+    # and a missing one must not invalidate the SEASON_START patch.
+    for i, line in enumerate(lines):
+        if re.match(r'\s*local\s+SEASON_NAME\s*=\s*"', line):
+            lines[i] = new_name
+            break
+    else:
+        print(f"WARN: SEASON_NAME line not found in {lua_path}", file=sys.stderr)
 
     if not patched:
         print(f"WARN: SEASON_START line not found in {lua_path}", file=sys.stderr)

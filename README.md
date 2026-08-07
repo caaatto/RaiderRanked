@@ -16,6 +16,8 @@ Download from [CurseForge](https://www.curseforge.com/wow/addons/raiderranked) o
 | `/rr hide` | Hide rank frame |
 | `/rr tooltip` | Toggle rank in tooltips |
 | `/rr ranks` | Show current thresholds |
+| `/rr ladder` | Open on the Rank Ladder tab |
+| `/rr seasons` | Open on the Seasons tab |
 | `/rr set <RANK> <score>` | Override a threshold |
 | `/rr reset` | Restore default thresholds |
 | `/rr cutoff` | Show active region / faction |
@@ -34,7 +36,7 @@ Download from [CurseForge](https://www.curseforge.com/wow/addons/raiderranked) o
 | `/rr pvpaura <size>` | Resize PvP aura (40–400) |
 | `/rr test` | Run in-game test suite |
 
-Diagnostics: `/rr debug` (raw score API output), `/rr groupdbg` (party categories and the resolved broadcast channel), `/rr pvpdebug` (PvP rating per bracket), `/rr wingsdbg` and `/rr unitdbg [unit]` (wing anchor and visibility).
+Diagnostics: `/rr debug` (raw score API output), `/rr groupdbg` (party categories and the resolved broadcast channel), `/rr pvpdebug` (PvP rating per bracket), `/rr wingsdbg` and `/rr unitdbg [unit]` (wing anchor, draw order and scale), `/rr wingstest [unit]` (force wings onto any target to check placement).
 
 ## Settings
 
@@ -73,6 +75,12 @@ Thresholds are based on the current season's score distribution and updated dail
 | Bronze | 10 - 30% |
 | Iron | 0 - 10% |
 
+### Rank Ladder
+
+The **Rank Ladder** tab shows the whole ladder at once instead of only the next step up: every rank with its emblem, its percentile band, and the score it starts at, with your current rank highlighted and the gap to the next one at the bottom together with the Top 100 cutoff. The thresholds shown are the ones actually in effect, so it follows your region / faction selection and any `/rr set` override.
+
+Reachable via `/rr ladder`, the tab strip, or **Shift-left-click** on the rank frame.
+
 ### Region and faction cutoffs
 
 The M+ seasonal title is awarded by Blizzard at the top 0.1% **per faction per region**, so Horde and Alliance have different cutoffs within the same region. Cutoffs are therefore computed for all nine combinations:
@@ -83,13 +91,15 @@ The M+ seasonal title is awarded by Blizzard at the top 0.1% **per faction per r
 | `us` — North America | `horde` |
 | `all` — population-weighted merge of US + EU | `alliance` |
 
-The active combination is selected in the Settings panel (ESC → Options → AddOns → RaiderRanked) or via `/rr cutoff <region> <faction>`, and the rank frame shows it as a muted subtitle (for example `EU · Alliance`). Default is `eu / all`.
+The active combination is selected in the Settings panel (ESC → Options → AddOns → RaiderRanked) or via `/rr cutoff <region> <faction>`, and the rank frame shows it as a muted subtitle (for example `EU / Alliance`). Default is `eu / all`.
 
 Switching sets migrates your thresholds: values that still match the previous defaults follow along, values you overrode with `/rr set` stay put.
 
 ## Score History
 
-`/rr history` opens a graph of your M+ score over the season, with rank-coloured bands in the background. Data is stored account-wide, so alts appear alongside your main.
+`/rr history` (or right-click on the minimap button) opens a window with three tabs — **Score History**, **Rank Ladder** and **Seasons**. It reopens on whichever tab you used last, and Escape closes it.
+
+The Score History tab graphs your M+ score over the season, with rank-coloured bands in the background. Data is stored account-wide, so alts appear alongside your main.
 
 - **Ranges** — 3d, 7d, 14d, 30d, or the full season
 - **Score** — raw score over time; solo as a filled area chart, multiple characters as one line each
@@ -98,6 +108,14 @@ Switching sets migrates your thresholds: values that still match the previous de
 - **Characters** — a dropdown toggles which characters are drawn
 
 Enable *Class colours in score history* (or `/rr classcolors`) to colour each character's line by its class. A character's class is only known once it has been logged into with the addon installed; anything unknown falls back to the default palette.
+
+## Season Archive
+
+The **Seasons** tab lists the best score each of your characters reached, per season, newest first. The running season is always the first block and updates live; the finished ones below it are frozen records.
+
+When the daily threshold job moves the season forward, the addon notices at the next login and condenses the finished season into that archive — best score, closing score, and the rank each of those was worth **under that season's own cutoffs**, so a record does not silently change meaning when next season's thresholds land. The season's history points are dropped at the same time, since the archive is the durable copy and the graph only ever draws the current season anyway.
+
+The best score is tracked continuously rather than read back out of the graph data, so it survives the 500-point-per-character history cap even on a long season. Characters you never logged into with the addon installed have nothing to archive and simply do not appear.
 
 ## Rank-Up Pop-Up
 
@@ -131,7 +149,7 @@ Broadcasts pick their channel from the party category you are actually in: `INST
 
 ## Threshold Auto-Update
 
-A daily GitHub Actions workflow fetches the M+ score distribution from Raider.IO for each region × faction combo (EU / NA × Horde / Alliance / All, plus a synthetic population-weighted `all` region), computes percentile cutoffs, patches `Cutoffs.lua` (all nine region/faction slots), `RankSystem.lua` (seed thresholds and Top 100 cutoff) and `ScoreHistory.lua` (the `SEASON_START` anchor), and uploads the updated addon to CurseForge.
+A daily GitHub Actions workflow fetches the M+ score distribution from Raider.IO for each region × faction combo (EU / NA × Horde / Alliance / All, plus a synthetic population-weighted `all` region), computes percentile cutoffs, patches `Cutoffs.lua` (all nine region/faction slots), `RankSystem.lua` (seed thresholds and Top 100 cutoff) and `ScoreHistory.lua` (the `SEASON_START` anchor and the `SEASON_NAME` label the archive files a finished season under), and uploads the updated addon to CurseForge.
 
 Both the active expansion and the active season are auto-detected from Raider.IO's `mythic-plus/static-data` endpoint on every run, so neither season rollovers (MN1 -> MN2) nor expansion rollovers (Midnight -> next) require a code change. The next scheduled run picks up the new slug, the patcher rewrites the constants from the new `seasonStart`, and CI ships an updated build. A `scripts/state.json` tracks last-known-good population, expansion, and season for a sanity guard that refuses to overwrite a healthy build with a half-empty Raider.IO snapshot, and as a fallback when static-data is unreachable. The script lives upstream in [caaatto/raiderranked-api](https://github.com/caaatto/raiderranked-api) and is mirrored byte-identical here.
 

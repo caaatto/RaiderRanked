@@ -235,9 +235,10 @@ local function CreateRankFrame()
             local factionLbl = RR.CUTOFF_FACTION_LABELS[RR.db.cutoffFaction] or RR.db.cutoffFaction
             tooltipLines = {
                 { text = "RaiderRanked", r = 0, g = 0.8, b = 1 },
-                { text = "Cutoff: " .. regionLbl .. " \194\183 " .. factionLbl,
+                { text = "Cutoff: " .. regionLbl .. " / " .. factionLbl,
                   r = 0.85, g = 0.85, b = 0.55 },
                 { text = "Left-click to show group ranks", r = 1, g = 1, b = 1 },
+                { text = "Shift-left-click for the rank ladder", r = 1, g = 1, b = 1 },
                 { text = RR.db.frameLocked and "Frame locked (click lock icon to unlock)"
                     or "Left-drag to move", r = 0.7, g = 0.7, b = 0.7 },
                 { text = "Right-click to hide  (/rr to show)", r = 0.7, g = 0.7, b = 0.7 },
@@ -310,7 +311,11 @@ local function CreateRankFrame()
             self:Hide()
             RR.db.showFrame = false
         elseif button == "LeftButton" and not didDrag then
-            RR:ToggleGroupPanel()
+            if IsShiftKeyDown() then
+                RR:ToggleRankLadder()
+            else
+                RR:ToggleGroupPanel()
+            end
         end
     end)
 
@@ -549,7 +554,7 @@ function RR:UpdateRankFrame()
     if rankFrame.cutoffText then
         local r = RR.CUTOFF_REGION_SHORT[self.db.cutoffRegion]   or self.db.cutoffRegion
         local f = RR.CUTOFF_FACTION_SHORT[self.db.cutoffFaction] or self.db.cutoffFaction
-        rankFrame.cutoffText:SetText(r .. " \194\183 " .. f)
+        rankFrame.cutoffText:SetText(r .. " / " .. f)
     end
 end
 
@@ -772,6 +777,8 @@ function RR:CreateMinimapButton()
             if button == "LeftButton" and not IsShiftKeyDown() then
                 RR:ToggleRankFrame()
             elseif button == "RightButton" then
+                -- Opens on whichever tab was last used; the tab strip inside
+                -- reaches the ladder and season views.
                 RR:ToggleHistoryGraph()
             end
         end,
@@ -782,7 +789,7 @@ function RR:CreateMinimapButton()
                 tooltip:AddDoubleLine("M+ Score", string.format("%.0f", RR.playerScore or 0), 0.7,0.7,0.7, 1,1,1)
             end
             tooltip:AddLine("Left-click to toggle frame", 0.5, 0.5, 0.5)
-            tooltip:AddLine("Right-click for score history", 0.5, 0.5, 0.5)
+            tooltip:AddLine("Right-click for history, ladder and seasons", 0.5, 0.5, 0.5)
             tooltip:AddLine("Shift-click to move", 0.5, 0.5, 0.5)
         end,
     })
@@ -825,6 +832,135 @@ function RR:ToggleMinimapButton(show)
     end
 end
 
+-- ── Foreign unit frame overlays ──────────────────────────────────────────────
+-- Overlays drawn on target / focus / party frames are parented to UIParent,
+-- never to the unit frame itself. Creating an insecure child inside a Blizzard
+-- unit frame taints it, and a tainted unit frame gets secret values back from
+-- the very unit API it reads itself — surfacing as "attempt to compare a
+-- secret number value" out of Blizzard_TextStatusBar on the next update.
+--
+-- This applies to *foreign* units only. The 12.x secret-value protection does
+-- not cover your own character, so PlayerFrame overlays can stay children of
+-- PlayerFrame and keep inheriting its position, scale and visibility.
+--
+-- Anchoring our textures to a Blizzard region is taint-free, so placement
+-- still follows the frame. What a UIParent child no longer inherits is the
+-- host's visibility and scale — scale matters because texture sizes come from
+-- atlas dimensions and unit frames are scalable in Edit Mode. Both are
+-- mirrored here; draw order is handled by SetOverlayLevel.
+
+local hostMirrors = {}
+local mirrorTicker
+
+local function ApplyMirror(m)
+    m.frame:SetShown(m.host:IsVisible())
+    if m.raise then
+        -- bumpStrata: mirrored overlays are siblings of their host, not
+        -- children, so they have no hierarchy advantage to fall back on.
+        RR:RaiseOverlayAbove(m.frame, m.host, true)
+    end
+    -- Match the host's on-screen scale exactly: our own effective scale is
+    -- UIParent's times whatever we set, so divide the target out.
+    local uiScale = UIParent:GetEffectiveScale()
+    if uiScale and uiScale > 0 then
+        local want = m.host:GetEffectiveScale() / uiScale
+        if want > 0 and math.abs(m.frame:GetScale() - want) > 0.001 then
+            m.frame:SetScale(want)
+        end
+    end
+end
+
+-- Deep enough to reach the bottom of a retail unit frame. Levels that matter
+-- can sit several containers down (UnitFrame → Container → PortraitContainer →
+-- …), and a walk that stops short reports a maximum that is too low.
+local MAX_LEVEL_SCAN_DEPTH = 10
+
+--- Highest frame level anywhere inside `frame`, ignoring `skip` and its
+--- subtree. Reading a Blizzard frame's hierarchy is taint-free.
+local function MaxLevelIn(frame, skip, depth)
+    local max = frame:GetFrameLevel()
+    if depth <= 0 then return max end
+    for _, child in ipairs({ frame:GetChildren() }) do
+        if child ~= skip then
+            local level = MaxLevelIn(child, skip, depth - 1)
+            if level > max then max = level end
+        end
+    end
+    return max
+end
+
+local STRATA_ORDER = {
+    "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG",
+    "FULLSCREEN", "FULLSCREEN_DIALOG", "TOOLTIP",
+}
+local STRATA_INDEX = {}
+for i, name in ipairs(STRATA_ORDER) do STRATA_INDEX[name] = i end
+
+local function NextStrataUp(strata)
+    local i = STRATA_INDEX[strata]
+    if not i then return "MEDIUM" end
+    return STRATA_ORDER[math.min(i + 1, #STRATA_ORDER)]
+end
+
+--- Raises an overlay above everything inside `host`.
+---
+--- A fixed level offset does not work here: the portrait sits in a nested
+--- container whose siblings carry levels of their own, and those differ per
+--- unit frame and per UI setup. Measuring the subtree is the only way to pick
+--- a level without guessing. `frame` is excluded from the measurement so
+--- repeated calls settle instead of ratcheting upwards.
+---
+--- Worth re-running periodically rather than once: Blizzard's own unit frame
+--- update runs off the same events we do, so a single measurement taken at
+--- target change can be based on levels raised a moment later.
+---
+---@param bumpStrata boolean|nil
+---   Put the overlay one strata above the host instead of alongside it.
+---   Needed for overlays that are not children of their host: measured levels
+---   alone did not put them in front in practice (a wing frame measured 1000
+---   levels above the portrait's container still rendered behind it), and
+---   strata outranks level unconditionally. Frames that ARE children of their
+---   host already win by hierarchy and must not be bumped, or they would jump
+---   out in front of unrelated UI.
+function RR:RaiseOverlayAbove(frame, host, bumpStrata)
+    if not frame or not host then return end
+    local strata = host:GetFrameStrata()
+    frame:SetFrameStrata(bumpStrata and NextStrataUp(strata) or strata)
+    frame:SetFrameLevel(MaxLevelIn(host, frame, MAX_LEVEL_SCAN_DEPTH) + 1)
+end
+
+--- Makes `frame` track `host`'s visibility and scale. Safe to call repeatedly.
+---@param raise boolean|nil  also keep the frame levelled above the host
+function RR:MirrorHostFrame(frame, host, raise)
+    if not frame or not host then return end
+    for _, m in ipairs(hostMirrors) do
+        if m.frame == frame then
+            m.host  = host
+            m.raise = raise
+            ApplyMirror(m)
+            return
+        end
+    end
+
+    local mirror = { frame = frame, host = host, raise = raise }
+    table.insert(hostMirrors, mirror)
+    ApplyMirror(mirror)   -- immediately, so nothing pops on the first tick
+
+    if mirrorTicker then return end
+    mirrorTicker = CreateFrame("Frame")
+    local since = 0
+    mirrorTicker:SetScript("OnUpdate", function(_, elapsed)
+        -- A quarter second is well under the threshold where a stale overlay
+        -- is noticeable, and cheap enough for a handful of frames.
+        since = since + elapsed
+        if since < 0.25 then return end
+        since = 0
+        for _, m in ipairs(hostMirrors) do
+            ApplyMirror(m)
+        end
+    end)
+end
+
 -- ── Portrait Wings ────────────────────────────────────────────────────────────
 -- Overlays a rank-tinted winged border on the player portrait.
 --
@@ -847,7 +983,11 @@ end
 function RR:CreatePortraitWings()
     if not PlayerFrame then return end
 
-    -- Parent to PlayerFrame so wings move/hide with it automatically.
+    -- Deliberately still a child of PlayerFrame, unlike the unit-frame overlays
+    -- above: wings inherit its position, scale and visibility for free, and the
+    -- taint that costs us is harmless here. The 12.x secret-value protection
+    -- covers other units, not your own — PlayerFrame reads only player data, so
+    -- a tainted PlayerFrame never hits the comparison that breaks TargetFrame.
     -- ARTWORK sublevel 2 matches ElitePlayerFrame_Enhanced — sits just above the
     -- portrait texture but below health bar chrome and other UI elements.
     local f = CreateFrame("Frame", nil, PlayerFrame)
@@ -954,6 +1094,10 @@ function RR:UpdatePortraitWings()
         portraitWingsTex:ClearAllPoints()
         local xOff = (atlas == WINGS_ATLAS_WINGED) and -10 or 0
         portraitWingsTex:SetPoint("CENTER", portrait, "CENTER", xOff, 0)
+        -- Being a child of PlayerFrame is not enough on its own: sibling
+        -- containers inside it carry their own levels. Measure, same as for
+        -- the unit frames.
+        self:RaiseOverlayAbove(portraitWingsFrame, PlayerFrame)
     end
     local ai     = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas)
     if ai then
@@ -978,7 +1122,11 @@ function RR:UpdatePortraitWings()
 
     portraitWingsTex:Show()
 
-    -- Shift the ZZZ rest indicator: higher and slightly to the right.
+    -- Shift the ZZZ rest indicator: higher and slightly to the right, so it
+    -- reads as the dragon sleeping rather than the character. This writes to a
+    -- Blizzard-owned region and therefore taints PlayerFrame — acceptable for
+    -- the same reason the wings stay parented to it: PlayerFrame only ever
+    -- reads player data, which is never secret.
     local ri = PlayerFrame
         and PlayerFrame.PlayerFrameContent
         and PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual
@@ -1050,6 +1198,25 @@ local function GetUnitPortraitRegion(unit)
     return nil
 end
 
+--- Forces wings onto a unit regardless of the usual player / score checks, so
+--- placement and draw order can be checked against whatever is targeted.
+--- Toggles; prints the same numbers as /rr unitdbg afterwards.
+function RR:TestUnitWings(unit)
+    unit = unit or "target"
+    if self.forceUnitWings == unit then
+        self.forceUnitWings = nil
+        print("|cff00ccffRaiderRanked|r Forced wings off (" .. unit .. ").")
+    else
+        local previous = self.forceUnitWings
+        self.forceUnitWings = unit
+        if previous then self:UpdateUnitWings(previous) end
+        print("|cff00ccffRaiderRanked|r Forcing Challenger wings on " ..
+            unit .. " — repeat the command to stop.")
+    end
+    self:UpdateUnitWings(unit)
+    self:DebugUnitWings(unit)
+end
+
 -- Debug: /rr unitdbg target  (or focus / party1 etc.)
 function RR:DebugUnitWings(unit)
     unit = unit or "target"
@@ -1083,6 +1250,24 @@ function RR:DebugUnitWings(unit)
     local d = unitWingData[unit]
     if d then
         print("  Wing tex shown:  " .. tostring(d.tex:IsVisible()))
+        -- Draw order and scale are the two things a UIParent-parented overlay
+        -- does not get for free, so print both sides of each comparison.
+        local owner = portrait and portrait.GetParent and portrait:GetParent()
+        print(string.format("  Wings:           %s lvl %d, scale %.3f",
+            d.frame:GetFrameStrata(), d.frame:GetFrameLevel(),
+            d.frame:GetEffectiveScale()))
+        if owner then
+            print(string.format("  Portrait owner:  %s lvl %d, scale %.3f",
+                owner:GetFrameStrata(), owner:GetFrameLevel(),
+                owner:GetEffectiveScale()))
+        end
+        if d.host then
+            print(string.format("  Host frame:      %s lvl %d, scale %.3f, visible %s",
+                d.host:GetFrameStrata(), d.host:GetFrameLevel(),
+                d.host:GetEffectiveScale(), tostring(d.host:IsVisible())))
+            print(string.format("  Highest in host: lvl %d (wings must beat this)",
+                MaxLevelIn(d.host, d.frame, MAX_LEVEL_SCAN_DEPTH)))
+        end
     else
         print("  Wing data:       not yet created")
     end
@@ -1101,51 +1286,81 @@ for i = 1, 4 do
     end
 end
 
+--- Resolves the unit frame a set of wings belongs to. Deferred, because the
+--- frame may not exist yet the first time a unit token is seen.
+local function ResolveWingHost(unit, d)
+    if d.host then return d.host end
+    local getter = UNIT_PARENT_GETTERS[unit]
+    d.host = getter and getter() or nil
+    if d.host then
+        -- raise = true: the level is re-measured on every tick, not just when
+        -- the unit changes, so Blizzard raising its own levels afterwards
+        -- cannot leave the wings buried.
+        RR:MirrorHostFrame(d.frame, d.host, true)
+    end
+    return d.host
+end
+
 local function EnsureUnitWingData(unit)
     if unitWingData[unit] then return unitWingData[unit] end
-    local getter = UNIT_PARENT_GETTERS[unit]
-    local parent = (getter and getter()) or UIParent
-    local f = CreateFrame("Frame", nil, parent)
-    f:SetAllPoints(parent)
-    if parent ~= UIParent then
-        f:SetFrameLevel(parent:GetFrameLevel() + 2)
-    else
-        f:SetFrameStrata("MEDIUM")
-        f:SetFrameLevel(3)
-    end
+    local f = CreateFrame("Frame", nil, UIParent)
+    f:SetAllPoints(UIParent)
+    f:SetFrameStrata("MEDIUM")
+    f:SetFrameLevel(3)
     local tex = f:CreateTexture(nil, "ARTWORK", nil, 2)
     tex:SetSize(200, 200)
     tex:Hide()
-    unitWingData[unit] = { frame = f, tex = tex }
-    return unitWingData[unit]
+    local d = { frame = f, tex = tex }
+    unitWingData[unit] = d
+    ResolveWingHost(unit, d)
+    return d
 end
 
 function RR:UpdateUnitWings(unit)
+    -- Checked before anything is built: with the option off the addon has no
+    -- business creating frames around the unit frames at all.
+    if not (RR.db and RR.db.showUnitWings ~= false) then
+        local existing = unitWingData[unit]
+        if existing then existing.tex:Hide() end
+        return
+    end
+
     local d   = EnsureUnitWingData(unit)
     local tex = d.tex
+    ResolveWingHost(unit, d)
 
-    if not (RR.db and RR.db.showUnitWings ~= false) then
-        tex:Hide()
-        return
-    end
+    -- /rr wingstest bypasses every eligibility check so draw order can be
+    -- verified against any target, not only a ranked player who happens to
+    -- be standing nearby.
+    local forced = (self.forceUnitWings == unit)
 
-    if not UnitExists(unit) or not UnitIsPlayer(unit) or not UnitIsConnected(unit) then
-        tex:Hide()
-        return
-    end
+    local score, rank
+    if forced then
+        if not UnitExists(unit) then
+            tex:Hide()
+            return
+        end
+        rank  = self.RANK_BY_ID["CHALLENGER"]
+        score = rank.wingScore
+    else
+        if not UnitExists(unit) or not UnitIsPlayer(unit) or not UnitIsConnected(unit) then
+            tex:Hide()
+            return
+        end
 
-    -- Skip low-level players who can't have M+ scores.
-    local level = UnitLevel(unit)
-    if level and level > 0 and level < 90 then
-        tex:Hide()
-        return
-    end
+        -- Skip low-level players who can't have M+ scores.
+        local level = UnitLevel(unit)
+        if level and level > 0 and level < 90 then
+            tex:Hide()
+            return
+        end
 
-    local score = self:GetScoreForUnit(unit)
-    local rank  = score and self:GetRankForScore(score)
-    if not rank or rank.id == "UNRANKED" then
-        tex:Hide()
-        return
+        score = self:GetScoreForUnit(unit)
+        rank  = score and self:GetRankForScore(score)
+        if not rank or rank.id == "UNRANKED" then
+            tex:Hide()
+            return
+        end
     end
 
     local portrait = GetUnitPortraitRegion(unit)
@@ -1166,6 +1381,10 @@ function RR:UpdateUnitWings(unit)
     local xOffset = (atlas == WINGS_ATLAS_WINGED) and 10 or 0
     tex:ClearAllPoints()
     tex:SetPoint("CENTER", portrait, "CENTER", xOffset, 0)
+    -- As a child of the unit frame the hierarchy decided what drew on top; as
+    -- a sibling that is gone, so the overlay goes a strata up. /rr unitdbg
+    -- prints what it resolved to.
+    self:RaiseOverlayAbove(d.frame, d.host or portrait:GetParent(), true)
     tex:SetAtlas(atlas, false)
     tex:SetTexCoord(0, 1, 0, 1)   -- no flip (mirrored vs player portrait)
     ApplyWingsColor(tex, rank, false)   -- false = texture is not flipped

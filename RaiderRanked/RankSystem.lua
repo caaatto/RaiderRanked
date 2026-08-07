@@ -195,6 +195,23 @@ for _, rank in ipairs(RR.RANKS) do
     RR.RANK_BY_ID[rank.id] = rank
 end
 
+-- Percentile band per rank, in percent of the ranked population (top, bottom).
+-- These are the bands the cutoff pipeline derives every minScore above from,
+-- so they are season-invariant and need no patching. Kept here rather than
+-- inside RR.RANKS so the daily patcher never has to walk past them.
+RR.RANK_PERCENTILES = {
+    CHALLENGER  = {  0.0,   0.1 },
+    GRANDMASTER = {  0.1,   0.3 },
+    MASTER      = {  0.3,   1.0 },
+    DIAMOND     = {  1.0,   4.0 },
+    EMERALD     = {  4.0,   8.0 },
+    PLATINUM    = {  8.0,  20.0 },
+    GOLD        = { 20.0,  40.0 },
+    SILVER      = { 40.0,  70.0 },
+    BRONZE      = { 70.0,  90.0 },
+    IRON        = { 90.0, 100.0 },
+}
+
 -- ── Top 100 threshold ─────────────────────────────────────────────────────
 -- Updated periodically. Players at or above this score get a special aura.
 RR.TOP_100_SCORE = 4347

@@ -15,6 +15,18 @@ local MAX_VISIBLE_PTS  = 100
 local LINE_THICKNESS   = 2
 local DOT_SIZE         = 6
 
+-- Tabs hang off the left edge like flags rather than sitting inside the
+-- window. Nothing in the window has to move for them, so the graph keeps its
+-- full size and the header row stays as it was.
+local TAB_W, TAB_H  = 92, 26
+local TAB_GAP       = 4
+local TAB_TOP       = 14   -- first tab, below the window's accent strip
+local TABS = {
+    { id = "history", label = "History", title = "Score History" },
+    { id = "ladder",  label = "Ladder",  title = "Rank Ladder"   },
+    { id = "seasons", label = "Seasons", title = "Seasons"       },
+}
+
 -- Abbreviated rank names for the Y-axis labels (shared with RankSystem).
 local RANK_SHORT = RR.RANK_SHORT
 
@@ -32,6 +44,10 @@ local ALT_COLORS = {
 
 -- MN Season 1 • Full start: 25 March 2026, 04:00 UTC (EU reset).
 local SEASON_START = time({ year = 2026, month = 3, day = 25, hour = 4, min = 0, sec = 0 })
+-- Label for the season above. Patched alongside SEASON_START by
+-- scripts/patch_addon.py; only ever used for display, so a stale value
+-- costs a wrong caption and nothing else.
+local SEASON_NAME = "Season 1"
 
 -- ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -140,6 +156,11 @@ function RR:InitScoreHistory()
         RaiderRankedCharDB.scoreHistory = nil
     end
 
+    -- File away a finished season before anything reads the history — this
+    -- also prunes the points it archived, so the cleanup below can drop any
+    -- character that had nothing but last season's data.
+    self:ArchiveSeasonIfRolled()
+
     -- Clean up empty or malformed entries (e.g. "Name-" without realm).
     for k, history in pairs(self.db.charHistory) do
         if not history or #history == 0 or k:match("%-$") then
@@ -215,6 +236,14 @@ function RR:RecordScoreSnapshot()
     local score = self.playerScore
     if not score then return end
 
+    -- The season peak is tracked separately from the history points so it
+    -- survives MAX_ENTRIES trimming — on a long season the entry that held
+    -- the peak can be evicted long before the season is archived.
+    self.db.charPeak = self.db.charPeak or {}
+    if (self.db.charPeak[key] or 0) < score then
+        self.db.charPeak[key] = score
+    end
+
     local history = self.db.charHistory[key]
     if not history then
         history = {}
@@ -256,6 +285,198 @@ function RR:RecordScoreSnapshot()
     if self.historyFrame and self.historyFrame:IsShown() then
         self:RefreshHistoryGraph()
     end
+end
+
+-- ── Season archive ──────────────────────────────────────────────────────────
+-- When the daily patcher moves SEASON_START forward, the finished season is
+-- condensed into db.seasonArchive before its history points are dropped:
+-- one record per season, one row per character (peak and final score plus the
+-- rank each of those was worth under that season's cutoffs).
+--
+-- db.seasonStart / db.seasonName mirror the constants as of the last login and
+-- are what tells us a rollover happened at all.
+
+--- Highest rank whose threshold the score clears, under a given threshold set.
+--- Falls back to the live RR.RANKS values where the set has no entry, so an
+--- old record without stored thresholds still resolves to something sane.
+local function RankIdFor(score, thresholds)
+    local bestId, bestMin
+    for _, rank in ipairs(RR.RANKS) do
+        if rank.id ~= "UNRANKED" then
+            local minScore = (thresholds and thresholds[rank.id]) or rank.minScore
+            if score >= minScore and (not bestMin or minScore > bestMin) then
+                bestId, bestMin = rank.id, minScore
+            end
+        end
+    end
+    return bestId or "UNRANKED"
+end
+
+--- Walks one character's history over [fromTs, toTs) and reports the peak, the
+--- last recorded score, when that was, and the newest threshold set seen up to
+--- toTs (which is what the closing rank should be judged against).
+local function ScanSeason(history, fromTs, toTs)
+    local peak, final, finalTs, thresholds
+    for _, e in ipairs(history) do
+        local ts, score = e[1], e[2]
+        if ts < toTs then
+            if e[3] then thresholds = e[3] end
+            if ts >= fromTs and score and score > 0 then
+                if not peak or score > peak then peak = score end
+                final, finalTs = score, ts
+            end
+        end
+    end
+    return peak, final, finalTs, thresholds
+end
+
+--- Builds the per-character rows for a season window.
+local function CollectSeasonChars(fromTs, toTs)
+    local chars = {}
+    for key, history in pairs(RR.db.charHistory or {}) do
+        local peak, final, finalTs, thresholds = ScanSeason(history, fromTs, toTs)
+        local tracked = RR.db.charPeak and RR.db.charPeak[key]
+        if tracked and (not peak or tracked > peak) then
+            peak = tracked
+        end
+        if peak and peak > 0 then
+            chars[key] = {
+                peak      = peak,
+                final     = final or peak,
+                ended     = finalTs,
+                peakRank  = RankIdFor(peak, thresholds),
+                finalRank = RankIdFor(final or peak, thresholds),
+            }
+        end
+    end
+    return chars
+end
+
+--- Oldest recorded point across all characters, or nil if there are none.
+local function EarliestPoint(db)
+    local earliest
+    for _, history in pairs(db.charHistory or {}) do
+        local first = history[1]
+        if first and (not earliest or first[1] < earliest) then
+            earliest = first[1]
+        end
+    end
+    return earliest
+end
+
+--- Files the previous season away and clears its data, if SEASON_START moved.
+--- Called from InitScoreHistory, i.e. once per login before anything reads the
+--- history.
+function RR:ArchiveSeasonIfRolled()
+    local db = self.db
+    if not db then return end
+
+    local function adopt()
+        db.seasonStart = SEASON_START
+        db.seasonName  = SEASON_NAME
+    end
+
+    local prevStart = db.seasonStart
+    if prevStart == nil then
+        -- No stored season yet: either this is the first login since the
+        -- archive existed (points start at SEASON_START, nothing to file), or
+        -- the addon was updated after a rollover and is holding data from a
+        -- season it never got to name.
+        prevStart = EarliestPoint(db)
+        if not prevStart or prevStart >= SEASON_START then
+            adopt()
+            return
+        end
+        db.seasonName = db.seasonName or "Earlier season"
+    elseif prevStart >= SEASON_START then
+        -- Clock or patcher went backwards; adopt without inventing a record.
+        adopt()
+        return
+    end
+
+    local chars = CollectSeasonChars(prevStart, SEASON_START)
+    if next(chars) then
+        db.seasonArchive = db.seasonArchive or {}
+        table.insert(db.seasonArchive, {
+            name  = db.seasonName or "Season",
+            start = prevStart,
+            ended = SEASON_START,
+            chars = chars,
+        })
+        print(string.format("|cff00ccffRaiderRanked|r %s archived — /rr seasons",
+            db.seasonName or "Previous season"))
+    end
+
+    -- Drop the finished season's points; the archive is the durable record and
+    -- the graph only ever draws from SEASON_START onwards anyway.
+    for _, history in pairs(db.charHistory or {}) do
+        for i = #history, 1, -1 do
+            if history[i][1] < SEASON_START then
+                table.remove(history, i)
+            end
+        end
+    end
+
+    db.charPeak = {}
+    adopt()
+end
+
+--- The running season as an archive-shaped record, so the panel can show it
+--- alongside the finished ones instead of staying empty until the first roll.
+function RR:GetCurrentSeasonRecord()
+    return {
+        name    = SEASON_NAME,
+        start   = SEASON_START,
+        current = true,
+        chars   = CollectSeasonChars(SEASON_START, time() + 1),
+    }
+end
+
+--- All seasons, newest first, current one at the top. Character rows are
+--- flattened into a sorted array so the panel can render them directly.
+---@return table[] seasons
+function RR:GetSeasonArchive()
+    local seasons = {}
+
+    -- Builds a display-only copy. The archived records live in SavedVariables,
+    -- so the flattened row list must never be written back onto them.
+    local function push(record)
+        local rows = {}
+        for key, data in pairs(record.chars or {}) do
+            table.insert(rows, {
+                key       = key,
+                name      = ShortCharName(key),
+                peak      = data.peak,
+                final     = data.final,
+                peakRank  = data.peakRank,
+                finalRank = data.finalRank,
+            })
+        end
+        table.sort(rows, function(a, b)
+            if a.peak == b.peak then return a.name < b.name end
+            return a.peak > b.peak
+        end)
+        table.insert(seasons, {
+            name    = record.name,
+            start   = record.start,
+            ended   = record.ended,
+            current = record.current,
+            rows    = rows,
+        })
+    end
+
+    push(self:GetCurrentSeasonRecord())
+
+    local archived = {}
+    for _, record in ipairs(self.db.seasonArchive or {}) do
+        table.insert(archived, record)
+    end
+    table.sort(archived, function(a, b) return (a.start or 0) > (b.start or 0) end)
+    for _, record in ipairs(archived) do
+        push(record)
+    end
+
+    return seasons
 end
 
 -- ── Downsampling (Largest Triangle Three Bucket) ────────────────────────────
@@ -541,6 +762,55 @@ end
 
 -- ── Graph Creation ──────────────────────────────────────────────────────────
 
+--- Side tabs in the window's own flat style — the Blizzard tab template
+--- carries gold chrome that would clash here. They are anchored to the outside
+--- of the left edge and overlap the border by a pixel so they read as attached.
+local function BuildTabStrip(f)
+    f.tabs = {}
+    for i, t in ipairs(TABS) do
+        local b = CreateFrame("Button", nil, f, "BackdropTemplate")
+        b:SetSize(TAB_W, TAB_H)
+        b:SetPoint("TOPRIGHT", f, "TOPLEFT", 1, -(TAB_TOP + (i - 1) * (TAB_H + TAB_GAP)))
+        b:SetBackdrop({
+            bgFile   = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8",
+            tile = false, edgeSize = 1,
+            insets = { left = 1, right = 1, top = 1, bottom = 1 },
+        })
+        b:SetBackdropBorderColor(0.18, 0.22, 0.28, 1)
+
+        -- Accent on the inner edge, so the active tab reads as continuous
+        -- with the window it belongs to.
+        local accent = b:CreateTexture(nil, "OVERLAY")
+        accent:SetPoint("TOPRIGHT", b, "TOPRIGHT", -1, -1)
+        accent:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -1, 1)
+        accent:SetWidth(2)
+        accent:SetColorTexture(0, 0.80, 1.00, 0.85)
+        accent:Hide()
+        b.accent = accent
+
+        local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("CENTER", b, "CENTER", -1, 0)
+        fs:SetText(t.label)
+        b.fs = fs
+
+        b.tabId = t.id
+        b:SetScript("OnClick", function() RR:SetHistoryTab(t.id) end)
+        b:SetScript("OnEnter", function(self)
+            if RR.historyFrame and RR.historyFrame.activeTab ~= t.id then
+                self:SetBackdropColor(0.10, 0.12, 0.16, 0.97)
+            end
+        end)
+        b:SetScript("OnLeave", function(self)
+            if RR.historyFrame and RR.historyFrame.activeTab ~= t.id then
+                self:SetBackdropColor(0.04, 0.05, 0.07, 0.97)
+            end
+        end)
+
+        table.insert(f.tabs, b)
+    end
+end
+
 local function CreateHistoryFrame()
     local f = CreateFrame("Frame", "RaiderRankedHistoryFrame", UIParent, "BackdropTemplate")
     f:SetSize(GRAPH_W, GRAPH_H)
@@ -573,18 +843,33 @@ local function CreateHistoryFrame()
         RR.db.historyPosition = { point = point, x = x, y = y }
     end)
 
-    -- Title
+    -- Title — shared chrome, retitled by SetHistoryTab to name the active view.
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -10)
-    title:SetText("|cff00ccffScore History|r")
+    f.title = title
 
     -- Close button
     local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
 
+    BuildTabStrip(f)
+
+    -- One pane per tab, all covering the frame; only one is shown at a time.
+    -- The history widgets below are parented to their pane rather than to the
+    -- frame, so switching tabs is a single Show/Hide instead of a list of
+    -- widgets to remember.
+    f.panes = {}
+    for _, t in ipairs(TABS) do
+        local pane = CreateFrame("Frame", nil, f)
+        pane:SetAllPoints(f)
+        pane:Hide()
+        f.panes[t.id] = pane
+    end
+    local historyPane = f.panes.history
+
     -- Delta header: "Score · Δ(range) · NextRank threshold Δ"
-    local deltaHeader = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    deltaHeader:SetPoint("TOP", f, "TOP", 0, -12)
+    local deltaHeader = historyPane:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    deltaHeader:SetPoint("TOP", historyPane, "TOP", 0, -12)
     deltaHeader:SetJustifyH("CENTER")
     f.deltaHeader = deltaHeader
 
@@ -600,13 +885,13 @@ local function CreateHistoryFrame()
 
     local prevBtn
     for _, r in ipairs(ranges) do
-        local btn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        local btn = CreateFrame("Button", nil, historyPane, "UIPanelButtonTemplate")
         btn:SetSize(44, 20)
         btn:SetText(r.label)
         if prevBtn then
             btn:SetPoint("LEFT", prevBtn, "RIGHT", 4, 0)
         else
-            btn:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -28)
+            btn:SetPoint("TOPLEFT", historyPane, "TOPLEFT", 12, -28)
         end
         btn:SetScript("OnClick", function()
             f.activeRange = r.days
@@ -616,10 +901,10 @@ local function CreateHistoryFrame()
     end
 
     -- Character toggle area (to the right of range buttons).
-    charToggleArea = CreateFrame("Frame", nil, f)
+    charToggleArea = CreateFrame("Frame", nil, historyPane)
     charToggleArea:SetHeight(20)
     charToggleArea:SetPoint("LEFT", prevBtn, "RIGHT", 12, 0)
-    charToggleArea:SetPoint("RIGHT", f, "RIGHT", -30, 0)
+    charToggleArea:SetPoint("RIGHT", historyPane, "RIGHT", -30, 0)
 
     -- Mode switcher (left gutter, vertical).
     f.mode = (RR.db and RR.db.historyMode) or "score"
@@ -630,9 +915,9 @@ local function CreateHistoryFrame()
         { id = "cutoffs",  label = "Cutoffs"  },
     }
     for i, m in ipairs(modes) do
-        local b = CreateFrame("Button", nil, f)
+        local b = CreateFrame("Button", nil, historyPane)
         b:SetSize(64, 20)
-        b:SetPoint("TOPLEFT", f, "TOPLEFT", 12 + (i - 1) * 68, -52)
+        b:SetPoint("TOPLEFT", historyPane, "TOPLEFT", 12 + (i - 1) * 68, -52)
 
         local bg = b:CreateTexture(nil, "BACKGROUND")
         bg:SetAllPoints(b)
@@ -660,13 +945,52 @@ local function CreateHistoryFrame()
     end
 
     -- Plot area
-    plotArea = CreateFrame("Frame", nil, f)
-    plotArea:SetPoint("TOPLEFT", f, "TOPLEFT", PLOT_PAD_LEFT, -(PLOT_PAD_TOP + 76))
-    plotArea:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -PLOT_PAD_RIGHT, PLOT_PAD_BOTTOM)
+    plotArea = CreateFrame("Frame", nil, historyPane)
+    plotArea:SetPoint("TOPLEFT", historyPane, "TOPLEFT", PLOT_PAD_LEFT, -(PLOT_PAD_TOP + 76))
+    plotArea:SetPoint("BOTTOMRIGHT", historyPane, "BOTTOMRIGHT", -PLOT_PAD_RIGHT, PLOT_PAD_BOTTOM)
 
+    -- The other two views live in Panels.lua and fill their pane below the
+    -- tab strip. Built here so all three exist from the first Show.
+    RR:BuildLadderPane(f.panes.ladder)
+    RR:BuildSeasonsPane(f.panes.seasons)
 
+    tinsert(UISpecialFrames, "RaiderRankedHistoryFrame")  -- Escape closes it
     f:Hide()
     return f
+end
+
+--- Switches the visible tab and refreshes whatever it shows.
+function RR:SetHistoryTab(id)
+    local f = self.historyFrame
+    if not f or not f.panes or not f.panes[id] then return end
+
+    for tabId, pane in pairs(f.panes) do
+        pane:SetShown(tabId == id)
+    end
+    f.activeTab = id
+    if self.db then self.db.historyTab = id end
+
+    for _, tab in ipairs(f.tabs) do
+        local on = (tab.tabId == id)
+        tab.fs:SetTextColor(on and 1 or 0.55, on and 1 or 0.55, on and 1 or 0.60)
+        tab:SetBackdropColor(on and 0.10 or 0.04, on and 0.12 or 0.05,
+                             on and 0.16 or 0.07, 0.97)
+        tab.accent:SetShown(on)
+    end
+
+    for _, t in ipairs(TABS) do
+        if t.id == id and f.title then
+            f.title:SetText("|cff00ccff" .. t.title .. "|r")
+        end
+    end
+
+    if id == "history" then
+        self:RefreshHistoryGraph()
+    elseif id == "ladder" then
+        self:RefreshRankLadder()
+    elseif id == "seasons" then
+        self:RefreshSeasonsPanel()
+    end
 end
 
 -- ── Graph Rendering ─────────────────────────────────────────────────────────
@@ -917,6 +1241,11 @@ end
 
 function RR:RefreshHistoryGraph()
     if not self.historyFrame or not plotArea then return end
+    -- Score changes trigger a refresh whenever the window is open, which now
+    -- includes the window being open on a different tab.
+    if self.historyFrame.activeTab and self.historyFrame.activeTab ~= "history" then
+        return
+    end
     if self.historyFrame.emptyText then self.historyFrame.emptyText:Hide() end
     self:UpdateHistoryModeButtons()
     UpdateDeltaHeader(self)
@@ -942,9 +1271,9 @@ function RR:RefreshHistoryGraph()
 
     if #allCharData == 0 and self.historyFrame.mode ~= "cutoffs" then
         if not self.historyFrame.emptyText then
-            self.historyFrame.emptyText = self.historyFrame:CreateFontString(
+            self.historyFrame.emptyText = self.historyFrame.panes.history:CreateFontString(
                 nil, "OVERLAY", "GameFontNormal")
-            self.historyFrame.emptyText:SetPoint("CENTER", self.historyFrame, "CENTER", 0, 0)
+            self.historyFrame.emptyText:SetPoint("CENTER", self.historyFrame.panes.history, "CENTER", 0, 0)
         end
         self.historyFrame.emptyText:SetText("|cff888888No data yet. Play some keys!|r")
         self.historyFrame.emptyText:Show()
@@ -997,9 +1326,9 @@ function RR:RefreshHistoryGraph()
 
     if #charDataSets == 0 and not isCutoffsMode then
         if not self.historyFrame.emptyText then
-            self.historyFrame.emptyText = self.historyFrame:CreateFontString(
+            self.historyFrame.emptyText = self.historyFrame.panes.history:CreateFontString(
                 nil, "OVERLAY", "GameFontNormal")
-            self.historyFrame.emptyText:SetPoint("CENTER", self.historyFrame, "CENTER", 0, 0)
+            self.historyFrame.emptyText:SetPoint("CENTER", self.historyFrame.panes.history, "CENTER", 0, 0)
         end
         self.historyFrame.emptyText:SetText("|cff888888No data in this range.|r")
         self.historyFrame.emptyText:Show()
@@ -1057,9 +1386,9 @@ function RR:RefreshHistoryGraph()
 
         if #charDataSets == 0 then
             if not self.historyFrame.emptyText then
-                self.historyFrame.emptyText = self.historyFrame:CreateFontString(
+                self.historyFrame.emptyText = self.historyFrame.panes.history:CreateFontString(
                     nil, "OVERLAY", "GameFontNormal")
-                self.historyFrame.emptyText:SetPoint("CENTER", self.historyFrame, "CENTER", 0, 0)
+                self.historyFrame.emptyText:SetPoint("CENTER", self.historyFrame.panes.history, "CENTER", 0, 0)
             end
             self.historyFrame.emptyText:SetText("|cff888888Not enough data in this range.|r")
             self.historyFrame.emptyText:Show()
@@ -1141,9 +1470,9 @@ function RR:RefreshHistoryGraph()
 
         if #charDataSets == 0 then
             if not self.historyFrame.emptyText then
-                self.historyFrame.emptyText = self.historyFrame:CreateFontString(
+                self.historyFrame.emptyText = self.historyFrame.panes.history:CreateFontString(
                     nil, "OVERLAY", "GameFontNormal")
-                self.historyFrame.emptyText:SetPoint("CENTER", self.historyFrame, "CENTER", 0, 0)
+                self.historyFrame.emptyText:SetPoint("CENTER", self.historyFrame.panes.history, "CENTER", 0, 0)
             end
             self.historyFrame.emptyText:SetText("|cff888888No cutoff changes recorded in this range.|r")
             self.historyFrame.emptyText:Show()
@@ -1208,7 +1537,7 @@ function RR:RefreshHistoryGraph()
         zero:SetPoint("BOTTOMLEFT", plotArea, "BOTTOMLEFT", 0, yZero)
         zero:SetSize(plotW, 1)
         zero:SetColorTexture(1, 1, 1, 0.35)
-        local zeroLbl = AcquireLabel(labelPool, self.historyFrame)
+        local zeroLbl = AcquireLabel(labelPool, self.historyFrame.panes.history)
         zeroLbl:ClearAllPoints()
         zeroLbl:SetPoint("LEFT", plotArea, "BOTTOMRIGHT", 4, yZero)
         zeroLbl:SetText("|cffaaaaaa±0|r")
@@ -1250,7 +1579,7 @@ function RR:RefreshHistoryGraph()
             -- on the right, so separating them avoids overlap when the player
             -- sits near a cutoff).
             if lo >= globalMinScore and lo <= globalMaxScore then
-                local lbl = AcquireLabel(labelPool, self.historyFrame)
+                local lbl = AcquireLabel(labelPool, self.historyFrame.panes.history)
                 lbl:ClearAllPoints()
                 lbl:SetPoint("RIGHT", plotArea, "BOTTOMLEFT", -4, yBottom)
                 local shortName = RANK_SHORT[rank.id] or rank.name
@@ -1269,7 +1598,7 @@ function RR:RefreshHistoryGraph()
     for i = 0, numLabels - 1 do
         local t = globalMinTime + (timeSpan * i) / (numLabels - 1)
         local x = MapX(t)
-        local lbl = AcquireLabel(labelPool, self.historyFrame)
+        local lbl = AcquireLabel(labelPool, self.historyFrame.panes.history)
         lbl:ClearAllPoints()
         lbl:SetPoint("TOP", plotArea, "BOTTOMLEFT", x, -2)
         lbl:SetText("|cff999999" .. date("%d.%m", t) .. "|r")
@@ -1328,7 +1657,7 @@ function RR:RefreshHistoryGraph()
             local last = cds.data[#cds.data]
             local yy = MapY(last[2])
             local c = cds.color
-            local lbl = AcquireLabel(labelPool, self.historyFrame)
+            local lbl = AcquireLabel(labelPool, self.historyFrame.panes.history)
             lbl:ClearAllPoints()
             lbl:SetPoint("LEFT", plotArea, "BOTTOMRIGHT", 4, yy)
             local short = RANK_SHORT[cds.key] or cds.key
@@ -1347,7 +1676,7 @@ function RR:RefreshHistoryGraph()
         local c = cds.color
         local val = math.floor(last[2] + 0.5)
         local col = val >= 0 and "66cc66" or "cc6666"
-        local lbl = AcquireLabel(labelPool, self.historyFrame)
+        local lbl = AcquireLabel(labelPool, self.historyFrame.panes.history)
         lbl:ClearAllPoints()
         lbl:SetPoint("LEFT", plotArea, "BOTTOMRIGHT", 4, yy)
         lbl:SetText(string.format("|cff%02x%02x%02x%s|r |cff%s%+d|r",
@@ -1362,7 +1691,7 @@ function RR:RefreshHistoryGraph()
             if cds.isCurrent and #cds.data > 0 then
                 local lastEntry = cds.data[#cds.data]
                 local cy = MapY(lastEntry[2])
-                local lbl = AcquireLabel(labelPool, self.historyFrame)
+                local lbl = AcquireLabel(labelPool, self.historyFrame.panes.history)
                 lbl:ClearAllPoints()
                 lbl:SetPoint("LEFT", plotArea, "BOTTOMRIGHT", 4, cy)
                 local rank = self:GetRankForScore(lastEntry[2])
@@ -1377,17 +1706,28 @@ end
 
 -- ── Toggle ──────────────────────────────────────────────────────────────────
 
-function RR:ToggleHistoryGraph(show)
+--- Opens the window on a given tab, or toggles it when `tab` is nil.
+--- Passing a tab always opens rather than toggles, so /rr ladder while the
+--- graph tab is up switches instead of closing the window.
+function RR:ToggleHistoryGraph(show, tab)
     if not self.historyFrame then
         self.historyFrame = CreateHistoryFrame()
         historyFrame = self.historyFrame
+        self:SetHistoryTab((self.db and self.db.historyTab) or "history")
     end
-    if show == nil then
+
+    if tab and tab ~= self.historyFrame.activeTab then
+        self:SetHistoryTab(tab)
+        show = true
+    elseif show == nil then
         show = not self.historyFrame:IsShown()
     end
+
     if show then
         self.historyFrame:Show()
-        C_Timer.After(0, function() RR:RefreshHistoryGraph() end)
+        C_Timer.After(0, function()
+            RR:SetHistoryTab(RR.historyFrame.activeTab or "history")
+        end)
     else
         self.historyFrame:Hide()
     end
