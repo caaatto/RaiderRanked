@@ -47,7 +47,7 @@ local SEASON_START = time({ year = 2026, month = 3, day = 25, hour = 4, min = 0,
 -- Label for the season above. Patched alongside SEASON_START by
 -- scripts/patch_addon.py; only ever used for display, so a stale value
 -- costs a wrong caption and nothing else.
-local SEASON_NAME = "Season 1"
+local SEASON_NAME = "MN Season 1 • Full"
 
 -- ── Helpers ─────────────────────────────────────────────────────────────────
 
