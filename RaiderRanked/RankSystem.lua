@@ -46,7 +46,7 @@ RR.RANKS = {
     {
         id        = "CHALLENGER",
         name      = "Challenger",
-        minScore  = 4222,
+        minScore  = 4227,
         wingScore = 4255,   -- always winged
         -- Wings use a gold→ice-blue gradient (see UI.lua ApplyWingsColor).
         -- This color is used for text, glow, and HUD elements.
@@ -61,7 +61,7 @@ RR.RANKS = {
     {
         id        = "GRANDMASTER",
         name      = "Grandmaster",
-        minScore  = 4064,
+        minScore  = 4065,
         wingScore = 4119,
         color     = { r = 1.000, g = 0.180, b = 0.180 },
         icon      = MEDIA .. "Ranks\\grandmaster.png",
@@ -74,8 +74,8 @@ RR.RANKS = {
     {
         id        = "MASTER",
         name      = "Master",
-        minScore  = 3983,
-        wingScore = 4016,
+        minScore  = 3992,
+        wingScore = 4017,
         color     = { r = 0.720, g = 0.220, b = 1.000 },
         icon      = MEDIA .. "Ranks\\master.png",
         emblem    = MEDIA .. "Emblems\\emblem-master.png",
@@ -113,7 +113,7 @@ RR.RANKS = {
     {
         id        = "PLATINUM",
         name      = "Platinum",
-        minScore  = 3168,
+        minScore  = 3167,
         wingScore = 3337,
         color     = { r = 0.000, g = 0.580, b = 0.720 },
         icon      = MEDIA .. "Ranks\\platinum.png",
@@ -139,8 +139,8 @@ RR.RANKS = {
     {
         id        = "SILVER",
         name      = "Silver",
-        minScore  = 1724,
-        wingScore = 2521,
+        minScore  = 1722,
+        wingScore = 2520,
         color     = { r = 0.780, g = 0.880, b = 1.000 },
         icon      = MEDIA .. "Ranks\\silver.png",
         emblem    = MEDIA .. "Emblems\\emblem-silver.png",
@@ -152,8 +152,8 @@ RR.RANKS = {
     {
         id        = "BRONZE",
         name      = "Bronze",
-        minScore  = 423,
-        wingScore = 1011,
+        minScore  = 420,
+        wingScore = 1009,
         color     = { r = 0.920, g = 0.500, b = 0.060 },
         icon      = MEDIA .. "Ranks\\bronze.png",
         emblem    = MEDIA .. "Emblems\\emblem-bronze.png",
