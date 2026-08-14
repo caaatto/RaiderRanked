@@ -212,6 +212,10 @@ RR.RANK_PERCENTILES = {
     IRON        = { 90.0, 100.0 },
 }
 
+-- Below this level a character cannot have a Mythic+ score at all, so it is
+-- not unranked, it is simply not playing this part of the game yet.
+RR.MIN_SCORED_LEVEL = 90
+
 -- ── Top 100 threshold ─────────────────────────────────────────────────────
 -- Updated periodically. Players at or above this score get a special aura.
 RR.TOP_100_SCORE = 4350

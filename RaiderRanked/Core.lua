@@ -24,6 +24,7 @@ RR.DB_DEFAULTS = {
     animUnlocked  = false,  -- drag handle visible; reset to false every login
     -- Score history
     historyClassColors = false,  -- colour character lines by class instead of palette
+    showPrevSeason     = true,   -- last season's rank on unit tooltips
     -- PvP
     pvpThresholds     = nil,
     showPvPFrame      = false,  -- opt-in via Settings
@@ -242,7 +243,7 @@ function RR:GetScoreForUnit(unit)
     -- Skip non-players (enemies, NPCs) and low-level players (below 90).
     if not UnitIsPlayer(unit) then return nil end
     local level = UnitLevel(unit)
-    if level and level > 0 and level < 90 then return nil end
+    if level and level > 0 and level < RR.MIN_SCORED_LEVEL then return nil end
 
     -- 1. Native Blizzard API (no addon dependency).
     if C_PlayerInfo and C_PlayerInfo.GetPlayerMythicPlusRatingSummary then
@@ -485,6 +486,9 @@ function RR:HandleSlashCommand(msg)
     elseif msg == "debug" then
         self:DebugScore()
 
+    elseif msg:match("^prevdbg") then
+        self:DebugPreviousSeason(msg:match("^prevdbg%s*(%S*)$"))
+
     elseif msg == "groupdbg" then
         self:DebugGroupChannel()
 
@@ -576,6 +580,7 @@ function RR:HandleSlashCommand(msg)
         print("|cff00ccffRaiderRanked|r Diagnostics:")
         print("  /rr debug              - dump raw score API output")
         print("  /rr groupdbg           - party categories + broadcast channel")
+        print("  /rr prevdbg [sim]      - last season sources; sim fakes a finished season")
         print("  /rr pvpdebug           - PvP rating per bracket")
         print("  /rr wings debug [unit] - wing anchor, draw order and scale")
         print("  /rr wings test [unit]  - force wings onto a unit to check placement")

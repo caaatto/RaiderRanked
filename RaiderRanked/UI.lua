@@ -693,19 +693,42 @@ function RR:HookTooltip()
             local pOk, isPlayer = pcall(UnitIsPlayer, unit)
             if not pOk or not isPlayer then return end
 
+            -- Below the level where Mythic+ exists there is no such thing as
+            -- unranked, only "not yet playing this game". UnitLevel is local
+            -- client data with no server round-trip, and GetScoreForUnit reads
+            -- it anyway, so this costs nothing. A level of 0 or below means
+            -- unknown (a much higher level target), which is not a reason to
+            -- stay quiet.
+            local lOk, level = pcall(UnitLevel, unit)
+            if lOk and level and level > 0 and level < RR.MIN_SCORED_LEVEL then return end
+
             -- M+ section.
             if RR.db.showInTooltip then
                 local score = RR:GetScoreForUnit(unit)
+
+                -- Last season, judged by the cutoffs that closed it. Fetched
+                -- before anything is drawn, because it decides whether there is
+                -- a reason to say anything at all.
+                local prevRank, prevScore, prevPlus
+                if RR.db.showPrevSeason ~= false and RR.GetPreviousSeasonRank then
+                    prevRank, prevScore, _, prevPlus = RR:GetPreviousSeasonRank(unit)
+                end
+
+                -- The rank line is unconditional. A score of 0 is Unranked, and
+                -- saying so matches the rank frame; staying silent there made
+                -- the addon look broken between seasons, when everyone reads 0.
+                local rank = RR:GetRankForScore(score or 0)
+                local c    = rank.color
+
+                tooltip:AddLine(" ")
+                tooltip:AddDoubleLine(
+                    "|cff00ccffRaiderRanked|r",
+                    ColorHex(c.r, c.g, c.b) .. RR:GetRankDisplayName(rank, score) .. "|r",
+                    1, 1, 1, c.r, c.g, c.b)
+
+                -- The score line is not: a bare 0 adds nothing the rank name
+                -- has not already said.
                 if score then
-                    local rank = RR:GetRankForScore(score)
-                    local c    = rank.color
-
-                    tooltip:AddLine(" ")
-                    tooltip:AddDoubleLine(
-                        "|cff00ccffRaiderRanked|r",
-                        ColorHex(c.r, c.g, c.b) .. RR:GetRankDisplayName(rank, score) .. "|r",
-                        1, 1, 1, c.r, c.g, c.b)
-
                     local scoreColor = RaiderIO and RaiderIO.GetScoreColor and
                         { RaiderIO.GetScoreColor(score) } or { c.r, c.g, c.b }
 
@@ -713,6 +736,18 @@ function RR:HookTooltip()
                         "M+ Score",
                         ColorHex(scoreColor[1] or c.r, scoreColor[2] or c.g, scoreColor[3] or c.b)
                             .. string.format("%.0f|r", score),
+                        0.7, 0.7, 0.7, 1, 1, 1)
+                end
+
+                if prevRank and prevScore then
+                    local pc = prevRank.color
+                    -- Same "+" rule as the live rank above, so the two read as
+                    -- the same kind of value.
+                    local prevName = prevRank.name .. (prevPlus and " +" or "")
+                    tooltip:AddDoubleLine(
+                        "Last season",
+                        ColorHex(pc.r, pc.g, pc.b) .. prevName .. "|r"
+                            .. string.format(" |cff888888(%.0f)|r", prevScore),
                         0.7, 0.7, 0.7, 1, 1, 1)
                 end
             end
@@ -1348,9 +1383,9 @@ function RR:UpdateUnitWings(unit)
             return
         end
 
-        -- Skip low-level players who can't have M+ scores.
+        -- Skip low-level players who cannot have M+ scores.
         local level = UnitLevel(unit)
-        if level and level > 0 and level < 90 then
+        if level and level > 0 and level < RR.MIN_SCORED_LEVEL then
             tex:Hide()
             return
         end
@@ -1513,6 +1548,14 @@ function RR:RegisterSettings()
             .. "/rr animpos; /rr animpos reset restores the default.",
         function() return self.db.animUnlocked end,
         function(val) self:ToggleAnimMover(val) end)
+
+    AddCheckbox("showPrevSeason",
+        "Show last season's rank in tooltips",
+        "Adds last season's rank to unit tooltips, judged by the cutoffs that "
+            .. "were in force when it closed. Comes from RaiderIO where it is "
+            .. "installed, otherwise from group members also running this addon.",
+        function() return self.db.showPrevSeason ~= false end,
+        function(val) self.db.showPrevSeason = val end)
 
     AddCheckbox("historyClassColors",
         "Class colours in score history",
