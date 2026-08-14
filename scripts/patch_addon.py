@@ -28,6 +28,95 @@ MONTH_NAMES = [
 CUTOFFS_HEADER_RE = re.compile(r'^RR\.CUTOFFS\.(\w+)\.(\w+)\s*=\s*\{')
 
 
+# --- Season-start floor ---------------------------------------------------
+#
+# Percentile cutoffs are meaningless in the first days of a season: the field
+# is tiny and made of the keenest players, so the computed numbers are both
+# very low and very volatile. Worse, they climb fast afterwards, so a player
+# who grinds can lose rank while gaining score.
+#
+# These values are a floor, not a starting point. A computed cutoff is used
+# only once it rises above the floor, so the ladder never sags and each rank
+# converts to a true percentile on its own, without a switchover cliff.
+#
+# Derived from Midnight Season 1 dungeon scoring: 155 for a timed +2, +15 per
+# keystone level, +15 again at the affix breakpoints 5, 7, 10 and 12, over a
+# pool of 8 dungeons. The upper half is "every dungeon at level N", the lower
+# half is "this many dungeons cleared at all", which is how the first evening
+# actually goes.
+#
+#   Challenger   2560   all 8 at +10        Platinum   1480   all 8 at +4
+#   Grandmaster  2320   all 8 at +9         Gold       1240   all 8 at +2
+#   Master       2200   all 8 at +8         Silver      620   about 4 at +2
+#   Diamond      2080   all 8 at +7         Bronze      310   about 2 at +2
+#   Emerald      1840   all 8 at +6         Iron          1   the first key
+#
+# wingScore is the midpoint to the next rank up, matching how the addon marks
+# the upper half of a bracket with "+".
+SEASON_FLOOR = {
+    "CHALLENGER":  {"minScore": 2560, "wingScore": 2560},
+    "GRANDMASTER": {"minScore": 2320, "wingScore": 2440},
+    "MASTER":      {"minScore": 2200, "wingScore": 2260},
+    "DIAMOND":     {"minScore": 2080, "wingScore": 2140},
+    "EMERALD":     {"minScore": 1840, "wingScore": 1960},
+    "PLATINUM":    {"minScore": 1480, "wingScore": 1660},
+    "GOLD":        {"minScore": 1240, "wingScore": 1360},
+    "SILVER":      {"minScore":  620, "wingScore":  930},
+    "BRONZE":      {"minScore":  310, "wingScore":  465},
+    "IRON":        {"minScore":    1, "wingScore":  155},
+}
+
+# One key level above Challenger, so the Top 100 aura stays a step beyond the
+# top rank rather than arriving with it.
+TOP100_FLOOR = 2680
+
+
+def apply_floor(thresholds):
+    """Raise each threshold to the season-start floor where it sits below it.
+
+    Every floored rank is emitted, including ones the payload did not contain:
+    a season Raider.IO has declared but holds no data for yields nothing at
+    all, and that is exactly the day the floor has to be written. During a
+    running season the computed values are far above the floor, so max() keeps
+    them and this is inert.
+    """
+    thresholds = thresholds or {}
+    out = dict(thresholds)
+    for rank_id, floor in SEASON_FLOOR.items():
+        vals = thresholds.get(rank_id) or {}
+        out[rank_id] = {
+            "minScore":  max(vals.get("minScore", 0),  floor["minScore"]),
+            "wingScore": max(vals.get("wingScore", 0), floor["wingScore"]),
+        }
+    return out
+
+
+# Rank order can never invert, because max() is monotone and both the computed
+# values and the floor are ordered the same way. That only holds while the
+# floor table itself stays ordered, so it is checked rather than assumed: a
+# later edit that put one rank out of sequence would otherwise produce a ladder
+# where a lower rank demands more score than the one above it.
+_FLOOR_ORDER = ["IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM",
+                "EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"]
+for _lower, _higher in zip(_FLOOR_ORDER, _FLOOR_ORDER[1:]):
+    if SEASON_FLOOR[_lower]["minScore"] >= SEASON_FLOOR[_higher]["minScore"]:
+        raise SystemExit(
+            f"SEASON_FLOOR out of order: {_lower} "
+            f"({SEASON_FLOOR[_lower]['minScore']}) must sit below {_higher} "
+            f"({SEASON_FLOOR[_higher]['minScore']})"
+        )
+if TOP100_FLOOR <= SEASON_FLOOR["CHALLENGER"]["minScore"]:
+    raise SystemExit("TOP100_FLOOR must sit above the Challenger floor")
+
+
+def apply_top100_floor(value):
+    """Same idea for the Top 100 cutoff, which drives the special aura."""
+    try:
+        return max(int(value or 0), TOP100_FLOOR)
+    except (TypeError, ValueError):
+        return TOP100_FLOOR
+
+
 def _patch_rank_block(lines, start_idx, thresholds, top100):
     """Patch minScore/wingScore/top100Score inside a Lua block starting
     at start_idx (the `{` line). Walks forward until a line matching
@@ -105,8 +194,8 @@ def patch_cutoffs(lua_path, cutoffs):
             if region_data:
                 end = _patch_rank_block(
                     lines, i,
-                    region_data["thresholds"],
-                    region_data.get("top100Score"),
+                    apply_floor(region_data["thresholds"]),
+                    apply_top100_floor(region_data.get("top100Score")),
                 )
                 patched_sections.append(f"{region}.{faction}")
                 i = end + 1
@@ -235,8 +324,8 @@ def main():
     # so first-frame fallback stays reasonably fresh.
     patch_rank_system(
         rank_system_path,
-        data["thresholds"],
-        data.get("top100Score"),
+        apply_floor(data["thresholds"]),
+        apply_top100_floor(data.get("top100Score")),
     )
 
     # 3. ScoreHistory.lua - SEASON_START constant.

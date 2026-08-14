@@ -74,6 +74,37 @@ Thresholds are based on the current season's score distribution and updated dail
 | Bronze | 10 - 30% |
 | Iron | 0 - 10% |
 
+### Season start
+
+Percentile cutoffs mean nothing in the first days of a season. The field is
+tiny and made of the keenest players, so the computed numbers come out very low
+and move fast, and a player who grinds can lose rank while gaining score.
+
+The ladder therefore has a floor for the opening days, derived from dungeon
+scoring rather than from a distribution:
+
+| Rank | Score | Equivalent |
+|---|---|---|
+| Challenger | 2560 | every dungeon at +10 |
+| Grandmaster | 2320 | every dungeon at +9 |
+| Master | 2200 | every dungeon at +8 |
+| Diamond | 2080 | every dungeon at +7 |
+| Emerald | 1840 | every dungeon at +6 |
+| Platinum | 1480 | every dungeon at +4 |
+| Gold | 1240 | every dungeon at +2 |
+| Silver | 620 | about four dungeons |
+| Bronze | 310 | about two dungeons |
+| Iron | 1 | the first key |
+
+The upper half is "every dungeon at level N", the lower half is "this many
+dungeons cleared at all", which is how the first evening of a season actually
+goes.
+
+These are a floor, not a starting point. A computed cutoff is used as soon as
+it rises above the floor, so the ladder never sags and each rank converts to a
+true percentile on its own. There is no switchover: by the time a rank leaves
+the floor, the real distribution has already caught up with it.
+
 ### Rank Ladder
 
 The **Rank Ladder** tab shows the whole ladder at once instead of only the next step up: every rank with its emblem, its percentile band, and the score it starts at, with your current rank highlighted and the gap to the next one at the bottom together with the Top 100 cutoff. The thresholds shown are the ones actually in effect, so it follows your region / faction selection and any `/rr set` override.
