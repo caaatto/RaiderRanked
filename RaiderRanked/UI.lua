@@ -52,7 +52,7 @@ end
 local function ShowRRTooltip(owner, side, lines)
     local t = EnsureRRTooltip()
 
-    -- Create / reuse FontStrings. We NEVER hide FontStrings — unused slots
+    -- Create / reuse FontStrings. We NEVER hide FontStrings - unused slots
     -- just get empty text. Hiding + re-showing in the same frame tick
     -- makes GetStringHeight/Width return stale zeros until the next layout
     -- pass, which collapses the tooltip into a bunched-up mess on the
@@ -81,7 +81,7 @@ local function ShowRRTooltip(owner, side, lines)
     end
 
     -- Absolute Y layout with a fixed per-line height. No GetStringHeight
-    -- dependency — deterministic across re-layouts.
+    -- dependency - deterministic across re-layouts.
     local y = TIP_PAD_Y
     for i = 1, #lines do
         local fs = rrTooltipLines[i]
@@ -152,7 +152,7 @@ local function CreateRankFrame()
         RR.db.framePosition = { point = point, x = x, y = y }
     end)
 
-    -- Lock button — shown only on hover, toggles frame drag lock.
+    -- Lock button - shown only on hover, toggles frame drag lock.
     local lockBtn = CreateFrame("Button", nil, f)
     lockBtn:SetSize(30, 30)
     lockBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, -6)
@@ -200,7 +200,7 @@ local function CreateRankFrame()
 
     -- Single source of truth for what the tooltip should show, based on
     -- the cursor's current mouse region. Guarded by a state token so the
-    -- lines are only rebuilt on actual transitions — called every frame
+    -- lines are only rebuilt on actual transitions - called every frame
     -- from OnUpdate while the cursor is anywhere over the rank frame.
     --
     -- Why OnUpdate and not just OnEnter/OnLeave: moving from the lock
@@ -208,7 +208,7 @@ local function CreateRankFrame()
     -- button is a child inside f's bounds, so WoW never considers f
     -- "left"). Also, when f:OnEnter shows the lock button for the first
     -- time, lockBtn:IsMouseOver() is still false in the same frame tick
-    -- and lockBtn:OnEnter doesn't fire until the next mouse move — so
+    -- and lockBtn:OnEnter doesn't fire until the next mouse move - so
     -- a quick hover directly onto the button's area would show the
     -- frame tooltip instead of the lock tooltip.
     local currentState   -- "lock", "frame", or nil
@@ -281,7 +281,7 @@ local function CreateRankFrame()
     icon:SetPoint("LEFT", f, "LEFT", 12, 0)
     f.icon = icon
 
-    -- Rank name + score — vertically centered as a block relative to the icon.
+    -- Rank name + score - vertically centered as a block relative to the icon.
     local nameText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     nameText:SetPoint("BOTTOMLEFT", icon, "RIGHT", 10, 2)
     nameText:SetPoint("RIGHT", f, "RIGHT", -10, 0)
@@ -296,7 +296,7 @@ local function CreateRankFrame()
     scoreText:SetWordWrap(false)
     f.scoreText = scoreText
 
-    -- Cutoff indicator — tiny muted text bottom-right, e.g. "EU · Horde".
+    -- Cutoff indicator - tiny muted text bottom-right, e.g. "EU · Horde".
     -- Reflects which Raider.IO cutoff set drives the current rank brackets.
     local cutoffText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     cutoffText:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -8, 4)
@@ -329,7 +329,7 @@ local function CreateRankFrame()
             lockBtn:Hide()
         end
     end)
-    -- Right-click hides the frame — make sure the tooltip and lock button
+    -- Right-click hides the frame - make sure the tooltip and lock button
     -- follow. OnLeave does not fire when a frame is hidden while the
     -- cursor is still over it, so we clean up explicitly here.
     f:HookScript("OnHide", function()
@@ -404,7 +404,7 @@ local function CreateGroupPanel()
     return p
 end
 
---- Collects group unit tokens (player + party1–4 or raid1–40).
+--- Collects group unit tokens (player + party1-4 or raid1-40).
 local function GetGroupUnits()
     local units = {}
     if IsInRaid() then
@@ -628,7 +628,7 @@ local function CreatePvPRankFrame()
 
     f:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:AddLine("RaiderRanked — PvP", 1, 0.3, 0.3)
+        GameTooltip:AddLine("RaiderRanked: PvP", 1, 0.3, 0.3)
         local brackets = RR:GetPvPBracketsForUnit("player")
         if brackets then
             for _, b in ipairs(RR.PVP_BRACKETS) do
@@ -764,7 +764,7 @@ function RR:CreateMinimapButton()
     local ldb  = LibStub("LibDataBroker-1.1", true)
     local icon = LibStub("LibDBIcon-1.0", true)
     if not ldb or not icon then
-        print("|cffff0000RaiderRanked|r LibDBIcon or LibDataBroker not found — minimap button disabled.")
+        print("|cffff0000RaiderRanked|r LibDBIcon or LibDataBroker not found. Minimap button disabled.")
         return
     end
 
@@ -836,7 +836,7 @@ end
 -- Overlays drawn on target / focus / party frames are parented to UIParent,
 -- never to the unit frame itself. Creating an insecure child inside a Blizzard
 -- unit frame taints it, and a tainted unit frame gets secret values back from
--- the very unit API it reads itself — surfacing as "attempt to compare a
+-- the very unit API it reads itself - surfacing as "attempt to compare a
 -- secret number value" out of Blizzard_TextStatusBar on the next update.
 --
 -- This applies to *foreign* units only. The 12.x secret-value protection does
@@ -845,7 +845,7 @@ end
 --
 -- Anchoring our textures to a Blizzard region is taint-free, so placement
 -- still follows the frame. What a UIParent child no longer inherits is the
--- host's visibility and scale — scale matters because texture sizes come from
+-- host's visibility and scale - scale matters because texture sizes come from
 -- atlas dimensions and unit frames are scalable in Edit Mode. Both are
 -- mirrored here; draw order is handled by SetOverlayLevel.
 
@@ -986,9 +986,9 @@ function RR:CreatePortraitWings()
     -- Deliberately still a child of PlayerFrame, unlike the unit-frame overlays
     -- above: wings inherit its position, scale and visibility for free, and the
     -- taint that costs us is harmless here. The 12.x secret-value protection
-    -- covers other units, not your own — PlayerFrame reads only player data, so
+    -- covers other units, not your own - PlayerFrame reads only player data, so
     -- a tainted PlayerFrame never hits the comparison that breaks TargetFrame.
-    -- ARTWORK sublevel 2 matches ElitePlayerFrame_Enhanced — sits just above the
+    -- ARTWORK sublevel 2 matches ElitePlayerFrame_Enhanced - sits just above the
     -- portrait texture but below health bar chrome and other UI elements.
     local f = CreateFrame("Frame", nil, PlayerFrame)
     f:SetAllPoints(PlayerFrame)
@@ -1124,7 +1124,7 @@ function RR:UpdatePortraitWings()
 
     -- Shift the ZZZ rest indicator: higher and slightly to the right, so it
     -- reads as the dragon sleeping rather than the character. This writes to a
-    -- Blizzard-owned region and therefore taints PlayerFrame — acceptable for
+    -- Blizzard-owned region and therefore taints PlayerFrame - acceptable for
     -- the same reason the wings stay parented to it: PlayerFrame only ever
     -- reads player data, which is never secret.
     local ri = PlayerFrame
@@ -1134,7 +1134,7 @@ function RR:UpdatePortraitWings()
     if ri and ri.SetPointsOffset then ri:SetPointsOffset(87, 14) end
 end
 
--- ── Unit portrait wings (target / focus / party1–4) ─────────────────────────
+-- ── Unit portrait wings (target / focus / party1-4) ─────────────────────────
 -- Same atlas + technique as the player wings, but driven by unit-change events.
 -- Wings are silently hidden if the portrait region can't be found (e.g. compact
 -- party frames where the portrait path differs per UI setup).
@@ -1211,7 +1211,7 @@ function RR:TestUnitWings(unit)
         self.forceUnitWings = unit
         if previous then self:UpdateUnitWings(previous) end
         print("|cff00ccffRaiderRanked|r Forcing Challenger wings on " ..
-            unit .. " — repeat the command to stop.")
+            unit .. ". Repeat the command to stop.")
     end
     self:UpdateUnitWings(unit)
     self:DebugUnitWings(unit)
@@ -1273,7 +1273,7 @@ function RR:DebugUnitWings(unit)
     end
 end
 
--- Parent frames for each unit — wings inherit their strata/level automatically.
+-- Parent frames for each unit - wings inherit their strata/level automatically.
 local UNIT_PARENT_GETTERS = {
     target = function() return TargetFrame end,
     focus  = function() return FocusFrame end,
@@ -1416,7 +1416,7 @@ function RR:InitUnitWings()
             RR:UpdateRankFrame()
             RR:RefreshGroupPanel()
         elseif event == "UNIT_NAME_UPDATE" or event == "UNIT_PORTRAIT_UPDATE" then
-            -- unit arg may be a token we track — update just that one
+            -- unit arg may be a token we track - update just that one
             if unit and unitWingData[unit] then
                 RR:UpdateUnitWings(unit)
             elseif unit == "target" or unit == "focus" then
@@ -1527,7 +1527,7 @@ function RR:RegisterSettings()
             self:RefreshHistoryGraph()
         end)
 
-    -- History graph button — removed from settings layout to avoid ShouldShow errors.
+    -- History graph button - removed from settings layout to avoid ShouldShow errors.
     -- Use right-click on minimap button or /rr history instead.
 
     AddCheckbox("showMinimap",
@@ -1592,7 +1592,7 @@ end
 function RR:SetPortraitWingsSize(size)
     size = tonumber(size)
     if not size or size < 20 or size > 600 then
-        print("|cff00ccffRaiderRanked|r Wings size must be 20–600")
+        print("|cff00ccffRaiderRanked|r Wings size must be 20-600")
         return
     end
     if portraitWingsTex then

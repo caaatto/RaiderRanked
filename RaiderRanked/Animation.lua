@@ -2,8 +2,8 @@
 -- Rank-up promotion animation with two-phase crossfade.
 --
 -- Two-phase system (from WebM tier-promotion videos):
---   fromRank.from  — old rank exit animation (47 frames at 20 fps = 2.35 s)
---   toRank.sheet   — new rank entrance animation (128 frames at 20 fps = 6.4 s)
+--   fromRank.from  - old rank exit animation (47 frames at 20 fps = 2.35 s)
+--   toRank.sheet   - new rank entrance animation (128 frames at 20 fps = 6.4 s)
 --
 -- Sequence (with fromRank):
 --   0.0s  backdrop dims in (subtle overlay, non-blocking)
@@ -55,7 +55,7 @@ local function After(delay, fn)
 end
 
 -- ── Spritesheet TexCoord driver (multi-slot) ─────────────────────────────────
--- Drives TexCoord ONLY — alpha is managed separately via alphaTargets.
+-- Drives TexCoord ONLY - alpha is managed separately via alphaTargets.
 -- Textures driven here must have ZERO AnimationGroups.
 
 local sheetAnims = {}   -- tex → { start, lastIdx, max }
@@ -178,7 +178,7 @@ local function Build()
     glow:SetAlpha(0)
     f.glow = glow
 
-    -- "To" animation (new rank) — sublevel 1 (underneath).
+    -- "To" animation (new rank) - sublevel 1 (underneath).
     -- ZERO AnimationGroups. TexCoord + alpha driven by OnUpdate.
     local sheetTex = f:CreateTexture(nil, "OVERLAY", nil, 1)
     sheetTex:SetSize(600, 600)
@@ -187,7 +187,7 @@ local function Build()
     sheetTex:SetAlpha(0)
     f.sheetTex = sheetTex
 
-    -- "From" animation (old rank) — sublevel 2 (ON TOP of sheetTex).
+    -- "From" animation (old rank) - sublevel 2 (ON TOP of sheetTex).
     -- Same constraints: ZERO AnimationGroups.
     local sheetTex2 = f:CreateTexture(nil, "OVERLAY", nil, 2)
     sheetTex2:SetSize(600, 600)
@@ -335,7 +335,7 @@ local function BuildMover()
         self:StopMovingOrSizing()
         -- Always store a CENTER offset: StartMoving may leave the frame anchored
         -- by a different point, and the mover and the animation anchor have
-        -- different sizes — only a shared CENTER keeps them aligned.
+        -- different sizes - only a shared CENTER keeps them aligned.
         local ux, uy = UIParent:GetCenter()
         local mx, my = self:GetCenter()
         RR.db.animPosition = { point = "CENTER", x = mx - ux, y = my - uy }
@@ -405,7 +405,7 @@ function RR:ToggleAnimMover(show)
         self:ApplyAnimPosition()
         m:Show()
         self.db.animUnlocked = true
-        print("|cff00ccffRaiderRanked|r Pop-up unlocked — drag the box, "
+        print("|cff00ccffRaiderRanked|r Pop-up unlocked. Drag the box, "
             .. "|cff00ff00right-click|r to save, |cffff6666Escape|r to discard. "
             .. "Preview with |cffffff00/rr anim challenger|r.")
     else
@@ -445,7 +445,7 @@ function RR:PlayRankUpAnimation(fromRank, toRank, newScore)
 
     local hasFrom = fromRank and fromRank.from
 
-    -- Challenger/Grandmaster get a longer emblem hold — they're the pinnacle ranks.
+    -- Challenger/Grandmaster get a longer emblem hold - they're the pinnacle ranks.
     local holdTime = EMBLEM_HOLD
     if toRank.id == "CHALLENGER" then holdTime = 6.0
     elseif toRank.id == "GRANDMASTER" then holdTime = 5.0 end
@@ -482,7 +482,7 @@ function RR:PlayRankUpAnimation(fromRank, toRank, newScore)
         pcall(PlaySound, SOUNDKIT and SOUNDKIT.ACHIEVEMENT_EARNED or 888)
     end
 
-    -- 0.0 s  moderate backdrop — dark enough for ADD-blend spritesheets to
+    -- 0.0 s  moderate backdrop - dark enough for ADD-blend spritesheets to
     -- read clearly, light enough to not feel like a full-screen takeover.
     Fade(f.bg, 0, 0.45, 0.5, function()
         f.bg:SetColorTexture(0, 0, 0, 0.45)
@@ -500,11 +500,11 @@ function RR:PlayRankUpAnimation(fromRank, toRank, newScore)
     if hasFrom then
         -- ── Two-phase: from (on top) + to (underneath) ──────────────────────
         --
-        -- sheetTex  (sublevel 1): "to" animation — starts at transition, revealed by flash
-        -- sheetTex2 (sublevel 2): "from" animation — plays on top, fades out at flash
+        -- sheetTex  (sublevel 1): "to" animation - starts at transition, revealed by flash
+        -- sheetTex2 (sublevel 2): "from" animation - plays on top, fades out at flash
         --
         -- The "from" animation plays ON TOP.  At the transition flash, "from"
-        -- fades out and "to" begins from frame 0 — so the new-rank crest
+        -- fades out and "to" begins from frame 0 - so the new-rank crest
         -- appears from the very start of its video, not mid-animation.
 
         local fromDur     = FROM_FRAMES / SHEET_FPS              -- 2.35 s
@@ -569,7 +569,7 @@ function RR:PlayRankUpAnimation(fromRank, toRank, newScore)
         After(toEndT + holdTime, function() RR:DismissAnimation() end)
 
     else
-        -- ── No fromRank: first rank ever — "to" plays directly ───────────────
+        -- ── No fromRank: first rank ever - "to" plays directly ───────────────
 
         f.sheetTex:SetTexture(toRank.sheet or toRank.emblem)
 

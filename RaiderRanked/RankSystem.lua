@@ -8,7 +8,7 @@ local ADDON_NAME, RR = ...
 -- RR:ApplyCutoffSelection(), driven by the region/faction dropdowns in
 -- the Settings panel (stored in db.cutoffRegion / db.cutoffFaction).
 -- Cutoffs.lua is auto-patched daily from Raider.IO rankings. Do not edit
--- the seed values below by hand — they are only a fallback for the first
+-- the seed values below by hand - they are only a fallback for the first
 -- frame before Cutoffs.lua has been consulted.
 --
 -- wingScore = midpoint of each bracket. Below midpoint → plain border (Boss-Gold).
@@ -17,15 +17,15 @@ local ADDON_NAME, RR = ...
 -- Percentile bands (season-invariant):
 --   Rank         Top %ile range
 --   Challenger   Top 0.1%        (always winged)
---   Grandmaster  0.1–0.3%
---   Master       0.3–1%
---   Diamond      1–4%
---   Emerald      4–8%
---   Platinum     8–20%
---   Gold         20–40%
---   Silver       40–70%
---   Bronze       70–90%
---   Iron         90–100%
+--   Grandmaster  0.1-0.3%
+--   Master       0.3-1%
+--   Diamond      1-4%
+--   Emerald      4-8%
+--   Platinum     8-20%
+--   Gold         20-40%
+--   Silver       40-70%
+--   Bronze       70-90%
+--   Iron         90-100%
 --   Unranked     no score
 
 -- Ordered highest to lowest. GetRankForScore() returns the first match.
@@ -33,14 +33,14 @@ local MEDIA = "Interface\\AddOns\\RaiderRanked\\Media\\"
 
 -- Spritesheets are rendered from official LoL tier-promotion WebM videos via
 -- Tools/render-spritesheets.js.  8×16 grid, 512 px/cell → 4096×8192.
---   <rank>_sheet.png       "to" animation — new rank crest appears (toFrames per rank)
---   <rank>_from_sheet.png  "from" animation — old rank crest leaves (47 frames)
+--   <rank>_sheet.png       "to" animation - new rank crest appears (toFrames per rank)
+--   <rank>_from_sheet.png  "from" animation - old rank crest leaves (47 frames)
 -- toFrames values come from the render script output. If unknown, defaults to 128.
 local SHEETS = MEDIA .. "Spritesheets\\"
 
 -- Colors are designed for use with SetDesaturation(1) on the wing atlas:
 -- the atlas is first converted to grayscale (neutralising the gold bake-in),
--- then the rank color is applied as a pure tint — so these values are fully
+-- then the rank color is applied as a pure tint - so these values are fully
 -- saturated and read true on screen.
 RR.RANKS = {
     {
@@ -256,7 +256,7 @@ end
 
 --- Returns the display name for a rank, appending " +" when the score is in
 --- the upper half of the bracket (at or above wingScore).
---- Challenger is excluded (top rank — always "Challenger").
+--- Challenger is excluded (top rank - always "Challenger").
 ---@param rank table
 ---@param score number|nil
 ---@return string
@@ -318,7 +318,7 @@ function RR:GetDefaultThresholds()
 end
 
 --- Applies the wingScore and TOP_100_SCORE values from the selected cutoff
---- set to RR.RANKS and RR.TOP_100_SCORE. minScore is not touched here —
+--- set to RR.RANKS and RR.TOP_100_SCORE. minScore is not touched here -
 --- that goes through ApplyThresholds so user overrides (/rr set) are
 --- preserved. Call this whenever db.cutoffRegion / db.cutoffFaction
 --- changes, followed by ApplyThresholds(db.thresholds).

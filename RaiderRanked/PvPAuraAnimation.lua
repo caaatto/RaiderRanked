@@ -1,7 +1,7 @@
 -- RaiderRanked: PvPAuraAnimation.lua
 -- Two-layer looping electric aura around the player portrait.
---   Back layer:  behind the portrait (FrameLevel - 1) — full brightness
---   Front layer: above the portrait (FrameLevel + 1)  — lower alpha
+--   Back layer:  behind the portrait (FrameLevel - 1) - full brightness
+--   Front layer: above the portrait (FrameLevel + 1)  - lower alpha
 -- The portrait naturally occludes the center, so the aura appears to
 -- wrap around the portrait ring.
 -- Uses ADD blend mode so the black spritesheet background is transparent.
@@ -98,8 +98,8 @@ function RR:CreatePvPAura()
 
     -- Both layers stay children of PlayerFrame. The unit-frame overlays in
     -- UI.lua had to move off their host to avoid tainting it, but PlayerFrame
-    -- only ever reads player data — which the 12.x secret-value protection does
-    -- not cover — so the taint costs nothing here, and being a child keeps
+    -- only ever reads player data - which the 12.x secret-value protection does
+    -- not cover - so the taint costs nothing here, and being a child keeps
     -- position, scale and draw order exactly as they were.
 
     -- Back layer: behind portrait.
@@ -215,7 +215,7 @@ function RR:TestPvPAura(rankName)
     print(string.format("|cff00ccffRaiderRanked|r Testing PvP aura: %s (%d frames, looping)",
         self:FormatPvPRankName(rank), pvpAuraMaxFrames))
     print(string.format("  Back alpha: %.0f%%  |  Front alpha: %.0f%%", BACK_ALPHA * 100, FRONT_ALPHA * 100))
-    print("  /rr pvpaura stop — to stop")
+    print("  /rr pvpaura stop  to stop")
 end
 
 
@@ -228,7 +228,7 @@ end
 function RR:SetPvPAuraSize(size)
     size = tonumber(size)
     if not size or size < 40 or size > 400 then
-        print("|cff00ccffRaiderRanked|r PvP aura size must be 40–400")
+        print("|cff00ccffRaiderRanked|r PvP aura size must be 40-400")
         return
     end
     if pvpAuraBackTex  then pvpAuraBackTex:SetSize(size, size)  end
@@ -276,7 +276,7 @@ local function PveOnUpdate()
     if not pveAuraActive or not pveAuraTex then return end
     local coords = { PveCalcTexCoord(GetTime()) }
     if not coords[1] then
-        -- Animation finished — hide until next trigger.
+        -- Animation finished - hide until next trigger.
         pveAuraActive = false
         pveAuraTex:Hide()
         return

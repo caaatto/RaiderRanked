@@ -122,7 +122,7 @@ end
 ok("RANKS sorted descending after apply", sorted)
 
 -- GetRankForScore still works after override.
--- (Bronze 400-599, Iron 600-799 now? No — Iron.minScore=600 means Iron starts at 600)
+-- (Bronze 400-599, Iron 600-799 now? No - Iron.minScore=600 means Iron starts at 600)
 -- With Iron at 600: score 500 should be Bronze, score 600 should be Iron.
 eq("Score 500 → BRONZE (after IRON override)", RR:GetRankForScore(500).id, "BRONZE")
 eq("Score 600 → IRON   (after IRON override)", RR:GetRankForScore(600).id, "IRON")

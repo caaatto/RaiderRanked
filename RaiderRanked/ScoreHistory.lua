@@ -15,6 +15,15 @@ local MAX_VISIBLE_PTS  = 100
 local LINE_THICKNESS   = 2
 local DOT_SIZE         = 6
 
+-- Points kept per character when a season is archived. Enough to preserve the
+-- shape of the curve, far below MAX_ENTRIES so old seasons cannot grow the
+-- saved variables without bound.
+local ARCHIVE_POINTS   = 120
+
+-- Forward declaration: the season archive downsamples through LTTB, and it is
+-- defined further down with the rest of the graph maths.
+local LTTB
+
 -- Tabs hang off the left edge like flags rather than sitting inside the
 -- window. Nothing in the window has to move for them, so the graph keeps its
 -- full size and the header row stays as it was.
@@ -67,7 +76,7 @@ end
 -- Opt-in (db.historyClassColors): colour each character's line by its class
 -- instead of the ALT_COLORS palette.  A class is only known for characters that
 -- have been logged into since the addon started recording it, so anything
--- unknown falls back to the palette — the graph never loses a line over it.
+-- unknown falls back to the palette - the graph never loses a line over it.
 
 --- Stores the current character's class token so alts can be coloured later.
 --- Cheap and idempotent, so it is called from several points: UnitClass()
@@ -134,7 +143,7 @@ function RR:PrintClassColorState()
         self.db.historyClassColors and "|cff00ff00ON|r" or "|cffff0000OFF|r"))
     print("  known:   " .. (#known > 0 and table.concat(known, ", ") or "none"))
     print("  unknown: " .. (#unknown > 0
-        and (table.concat(unknown, ", ") .. " |cff888888— log in once on each|r")
+        and (table.concat(unknown, ", ") .. " |cff888888(log in once on each)|r")
         or "none"))
 end
 
@@ -156,10 +165,33 @@ function RR:InitScoreHistory()
         RaiderRankedCharDB.scoreHistory = nil
     end
 
-    -- File away a finished season before anything reads the history — this
+    -- File away a finished season before anything reads the history - this
     -- also prunes the points it archived, so the cleanup below can drop any
     -- character that had nothing but last season's data.
     self:ArchiveSeasonIfRolled()
+
+    -- One-off repair for saves written before zero scores were skipped: drop
+    -- any 0 recorded *after* a real score. Those are season-end readings, and
+    -- left in place they draw a cliff to the floor. The leading anchor entry
+    -- is deliberately kept - that one is the season's starting point.
+    for _, history in pairs(self.db.charHistory) do
+        local firstScored
+        for i = 1, #history do
+            local value = history[i][2]
+            if value and value > 0 then
+                firstScored = i
+                break
+            end
+        end
+        if firstScored then
+            for i = #history, firstScored + 1, -1 do
+                local value = history[i][2]
+                if not value or value <= 0 then
+                    table.remove(history, i)
+                end
+            end
+        end
+    end
 
     -- Clean up empty or malformed entries (e.g. "Name-" without realm).
     for k, history in pairs(self.db.charHistory) do
@@ -236,13 +268,22 @@ function RR:RecordScoreSnapshot()
     local score = self.playerScore
     if not score then return end
 
+    -- A score of 0 means "no runs recorded", not "scored zero". At a season
+    -- end every player reads 0, and recording that would draw a cliff to the
+    -- floor across the whole roster and drag the season's closing figures down
+    -- with it. The {SEASON_START, 0} anchor already gives a new season its
+    -- starting point, so nothing is lost by skipping these.
+    if score <= 0 then return end
+
     -- The season peak is tracked separately from the history points so it
-    -- survives MAX_ENTRIES trimming — on a long season the entry that held
+    -- survives MAX_ENTRIES trimming - on a long season the entry that held
     -- the peak can be evicted long before the season is archived.
     self.db.charPeak = self.db.charPeak or {}
     if (self.db.charPeak[key] or 0) < score then
         self.db.charPeak[key] = score
     end
+
+    self:RecordBestRank(key, score)
 
     local history = self.db.charHistory[key]
     if not history then
@@ -312,41 +353,165 @@ local function RankIdFor(score, thresholds)
     return bestId or "UNRANKED"
 end
 
---- Walks one character's history over [fromTs, toTs) and reports the peak, the
---- last recorded score, when that was, and the newest threshold set seen up to
---- toTs (which is what the closing rank should be judged against).
-local function ScanSeason(history, fromTs, toTs)
-    local peak, final, finalTs, thresholds
-    for _, e in ipairs(history) do
-        local ts, score = e[1], e[2]
-        if ts < toTs then
-            if e[3] then thresholds = e[3] end
-            if ts >= fromTs and score and score > 0 then
-                if not peak or score > peak then peak = score end
-                final, finalTs = score, ts
+--- Approximate percentile for a score, under a given threshold set.
+---
+--- Each rank owns a fixed percentile band (RR.RANK_PERCENTILES), and the score
+--- range of that band is the distance to the next rank's threshold. Where the
+--- score sits inside its range maps linearly onto where it sits inside the
+--- band. That is an approximation - the real distribution is not linear within
+--- a bracket - but it is derived from the same cutoffs the ranks are, so it can
+--- never disagree with the rank shown beside it.
+---@return number|nil percentile, table|nil rank
+local function ScorePercentile(score, thresholds)
+    if not score or score <= 0 then return nil end
+
+    local rank, rankMin
+    for _, r in ipairs(RR.RANKS) do
+        if r.id ~= "UNRANKED" then
+            local minScore = (thresholds and thresholds[r.id]) or r.minScore
+            if score >= minScore and (not rankMin or minScore > rankMin) then
+                rank, rankMin = r, minScore
             end
         end
     end
-    return peak, final, finalTs, thresholds
+    if not rank then return nil end
+
+    local band = RR.RANK_PERCENTILES and RR.RANK_PERCENTILES[rank.id]
+    if not band then return nil, rank end
+
+    -- Fraction of the way from this rank's threshold to the next rank's.
+    local nextRank = RR:GetNextRank(rank)
+    local upper = nextRank
+        and ((thresholds and thresholds[nextRank.id]) or nextRank.minScore)
+    local frac = 0
+    if upper and upper > rankMin then
+        frac = math.min(1, (score - rankMin) / (upper - rankMin))
+    end
+
+    -- band[1] is the top edge (the smaller percentage), band[2] the bottom.
+    return band[2] - frac * (band[2] - band[1]), rank
+end
+
+RR.ScorePercentile = function(_, score, thresholds)
+    return ScorePercentile(score, thresholds)
+end
+
+--- Walks one character's history over [fromTs, toTs) and reports the peak, the
+--- last recorded score, when that was, and the newest threshold set seen up to
+--- toTs (which is what the closing rank should be judged against).
+--- Also reports the thresholds that were in effect *at the peak*, which is not
+--- the same set as at the season's end. Cutoffs climb all season as the field
+--- gains score, so judging an April peak by August's cutoffs makes it look
+--- worse than it was. The peak is only meaningful against the ladder it was
+--- standing on.
+-- Switching region or faction rewrites the active thresholds, so a burst of
+-- points can share one score while carrying wildly different cutoffs. Those are
+-- previews, not ladder movement, and the best of them would be the most
+-- flattering rather than the most accurate. Real threshold updates land once a
+-- day; anything repeating within this window is a burst, and only its last
+-- point counts.
+local SWITCH_BURST_SECONDS = 300
+
+local function ScanSeason(history, fromTs, toTs)
+    local peak, peakAt, final, finalTs, thresholds, peakThresholds
+    local bestPct, bestPctAt, bestPctScore, bestPctThresholds
+
+    for i, e in ipairs(history) do
+        local ts, score = e[1], e[2]
+        if ts < toTs then
+            -- Thresholds are stored sparsely, only when they changed, so this
+            -- carries the newest set seen so far as the walk moves forward.
+            if e[3] then thresholds = e[3] end
+
+            if ts >= fromTs and score and score > 0 then
+                if not peak or score > peak then
+                    peak = score
+                    peakAt = ts
+                    peakThresholds = thresholds
+                end
+                final, finalTs = score, ts
+
+                -- Best rank ever held, which is not the same moment as the
+                -- best score: cutoffs climb all season, so an earlier and
+                -- lower score can outrank a later and higher one.
+                local nextEntry = history[i + 1]
+                local inBurst = nextEntry
+                    and nextEntry[2] == score
+                    and (nextEntry[1] - ts) < SWITCH_BURST_SECONDS
+                if not inBurst then
+                    local pct = ScorePercentile(score, thresholds)
+                    if pct and (not bestPct or pct < bestPct) then
+                        bestPct, bestPctAt, bestPctScore = pct, ts, score
+                        bestPctThresholds = thresholds
+                    end
+                end
+            end
+        end
+    end
+
+    return peak, final, finalTs, thresholds, peakThresholds,
+        bestPct, bestPctAt, bestPctScore, bestPctThresholds, peakAt
 end
 
 --- Builds the per-character rows for a season window.
 local function CollectSeasonChars(fromTs, toTs)
     local chars = {}
+    -- Callable before the database is bound (a panel built early, a test
+    -- harness); an empty result is the honest answer, not an error.
+    if not RR.db then return chars end
     for key, history in pairs(RR.db.charHistory or {}) do
-        local peak, final, finalTs, thresholds = ScanSeason(history, fromTs, toTs)
+        local peak, final, finalTs, thresholds, peakThresholds,
+              bestPct, bestPctAt, bestPctScore, bestPctThresholds, peakAt =
+            ScanSeason(history, fromTs, toTs)
+
+        -- The tracked peak survives history trimming, so it can be higher than
+        -- anything still in the points. When it is, the moment it happened is
+        -- no longer known, and the oldest thresholds on record are the closest
+        -- honest guess - they are the ones nearest that lost point in time.
         local tracked = RR.db.charPeak and RR.db.charPeak[key]
         if tracked and (not peak or tracked > peak) then
             peak = tracked
+            peakThresholds = peakThresholds or thresholds
         end
+
         if peak and peak > 0 then
+            -- Rank and percentile are both judged against the peak-time
+            -- thresholds so they can never contradict each other. The closing
+            -- rank keeps the season's final cutoffs, which is when it was final.
             chars[key] = {
                 peak      = peak,
+                peakAt    = peakAt,
                 final     = final or peak,
                 ended     = finalTs,
-                peakRank  = RankIdFor(peak, thresholds),
+                peakRank  = RankIdFor(peak, peakThresholds or thresholds),
                 finalRank = RankIdFor(final or peak, thresholds),
+                -- Stored now, not derived later: an archived season's cutoffs
+                -- are gone, and today's would misjudge an old peak.
+                peakPct   = ScorePercentile(peak, peakThresholds or thresholds),
+                -- The best rank actually held, with the score and date it was
+                -- held at. Usually a different day than the best score.
+                bestPct      = bestPct,
+                bestPctAt    = bestPctAt,
+                bestPctScore = bestPctScore,
+                bestPctRank  = bestPctScore
+                    and RankIdFor(bestPctScore, bestPctThresholds) or nil,
             }
+
+            -- Live measurements beat anything reconstructed from the points:
+            -- each was taken at the moment it happened, on the ladder it
+            -- belongs to. Carried through whole, so every ladder keeps its own
+            -- best rather than being collapsed to the player's current one.
+            local tracked = RR.db.charBest and RR.db.charBest[key]
+            if tracked and tracked.ladders then
+                chars[key].bestLadders = tracked.ladders
+            end
+            local own = RR.GetOwnBest and RR:GetOwnBest(key)
+            if own and own.pct and (not chars[key].bestPct or own.pct < chars[key].bestPct) then
+                chars[key].bestPct      = own.pct
+                chars[key].bestPctAt    = own.ts
+                chars[key].bestPctScore = own.score
+                chars[key].bestPctRank  = own.rank
+            end
         end
     end
     return chars
@@ -394,31 +559,198 @@ function RR:ArchiveSeasonIfRolled()
         return
     end
 
-    local chars = CollectSeasonChars(prevStart, SEASON_START)
-    if next(chars) then
-        db.seasonArchive = db.seasonArchive or {}
-        table.insert(db.seasonArchive, {
-            name  = db.seasonName or "Season",
-            start = prevStart,
-            ended = SEASON_START,
-            chars = chars,
-        })
-        print(string.format("|cff00ccffRaiderRanked|r %s archived — /rr seasons",
-            db.seasonName or "Previous season"))
-    end
+    -- The record is created unconditionally: even a season nobody scored in
+    -- still owns whatever points exist, and they have to go somewhere before
+    -- the history is cleared below.
+    local record = {
+        name       = db.seasonName or "Season",
+        start      = prevStart,
+        ended      = SEASON_START,
+        chars      = CollectSeasonChars(prevStart, SEASON_START),
+        charPoints = {},
+        -- The ladders as they stood when the season closed. Ninety numbers,
+        -- written once, and the only way a finished season stays comparable:
+        -- the live cutoffs now describe the new season, where everyone is at
+        -- zero again.
+        endCutoffs = RR:AllCutoffThresholds(),
+    }
 
-    -- Drop the finished season's points; the archive is the durable record and
-    -- the graph only ever draws from SEASON_START onwards anyway.
-    for _, history in pairs(db.charHistory or {}) do
+    -- Points move into the record rather than being deleted, so a past season
+    -- can still be drawn. Downsampled on the way in: full resolution only
+    -- matters for the season being played, and this keeps the saved variables
+    -- bounded however many seasons pile up.
+    for key, history in pairs(db.charHistory or {}) do
+        local moved = {}
+        for i = 1, #history do
+            if history[i][1] < SEASON_START then
+                table.insert(moved, history[i])
+            end
+        end
         for i = #history, 1, -1 do
             if history[i][1] < SEASON_START then
                 table.remove(history, i)
             end
         end
+        if #moved > 0 then
+            record.charPoints[key] = LTTB(moved, ARCHIVE_POINTS)
+        end
+    end
+
+    if next(record.chars) or next(record.charPoints) then
+        db.seasonArchive = db.seasonArchive or {}
+        table.insert(db.seasonArchive, record)
+        print(string.format("|cff00ccffRaiderRanked|r %s archived. See /rr seasons",
+            record.name))
     end
 
     db.charPeak = {}
+    db.charBest = {}
     adopt()
+end
+
+--- Raider.IO ships season names like "MN Season 1 • Full", where the suffix is
+--- the phase rather than the season. For display the phase is noise, and the
+--- bullet is a character this UI deliberately avoids, so everything from it
+--- onwards is dropped. Applied at display time, not at storage time, so
+--- seasons archived under the raw name clean up too.
+function RR:SeasonDisplayName(name)
+    if type(name) ~= "string" or name == "" then return "Season" end
+    local trimmed = name:match("^(.-)%s*\226\128\162")   -- U+2022 bullet
+        or name:match("^(.-)%s*\194\183")                -- U+00B7 middle dot
+        or name
+    trimmed = trimmed:gsub("%s+$", "")
+    if trimmed == "" then return name end
+    return trimmed
+end
+
+--- Flat id -> minScore table for a region/faction, in the shape the percentile
+--- and rank helpers expect. These are today's cutoffs: the addon only ever
+--- ships the current set, so this cannot reconstruct a past season's ladder.
+--- Returns nil unless every ranked tier is present. Callers use this to judge
+--- a score against a ladder the player is not on, and a partial table would
+--- silently fall through to the live values, showing their own ladder under
+--- another ladder's name. Better to report that it cannot be answered.
+function RR:CutoffThresholds(region, faction)
+    local set = self.GetCutoffSet and self:GetCutoffSet(region, faction)
+    if not set then return nil end
+
+    local out = {}
+    for _, rank in ipairs(self.RANKS) do
+        if rank.id ~= "UNRANKED" then
+            local entry = set[rank.id]
+            if not entry or not entry.minScore then return nil end
+            out[rank.id] = entry.minScore
+        end
+    end
+    return out
+end
+
+--- Remembers, per region/faction, the best rank a character has ever held on
+--- that ladder and when. Each ladder keeps its own best moment rather than
+--- sharing one: the percentile curves differ, so the day a player stood
+--- highest against EU Alliance is not necessarily the day they stood highest
+--- against US Horde.
+---
+--- Nine small entries per character, overwritten rather than appended, so the
+--- cost is fixed no matter how long the season runs - and it removes any need
+--- to ship a growing archive of historical cutoffs to reconstruct this later.
+function RR:RecordBestRank(key, score)
+    self.db.charBest = self.db.charBest or {}
+    local best = self.db.charBest[key]
+    if not best then
+        best = { ladders = {} }
+        self.db.charBest[key] = best
+    end
+    best.ladders = best.ladders or {}
+
+    local now = time()
+    for _, region in ipairs(self.CUTOFF_REGIONS) do
+        local thresholdsByFaction = best.ladders[region] or {}
+        best.ladders[region] = thresholdsByFaction
+
+        for _, faction in ipairs(self.CUTOFF_FACTIONS) do
+            local thresholds = self:CutoffThresholds(region, faction)
+            if thresholds then
+                local pct, rank = self:ScorePercentile(score, thresholds)
+                local stored = thresholdsByFaction[faction]
+                -- Lower percentile is better. Ties keep the earlier moment:
+                -- reaching a rank first is the achievement, holding it is not.
+                if pct and (not stored or pct < stored.pct) then
+                    thresholdsByFaction[faction] = {
+                        pct   = pct,
+                        ts    = now,
+                        score = score,
+                        rank  = rank and rank.id or nil,
+                    }
+                end
+            end
+        end
+    end
+end
+
+--- All nine ladders as flat id -> minScore tables. Snapshotted when a season
+--- is archived, because after the rollover the live cutoffs belong to the new
+--- season and comparing a finished season's score against them is meaningless.
+function RR:AllCutoffThresholds()
+    local out = {}
+    for _, region in ipairs(self.CUTOFF_REGIONS) do
+        out[region] = {}
+        for _, faction in ipairs(self.CUTOFF_FACTIONS) do
+            out[region][faction] = self:CutoffThresholds(region, faction)
+        end
+    end
+    return out
+end
+
+--- The character's best on whichever ladder they have configured.
+function RR:GetOwnBest(key)
+    local best = self.db.charBest and self.db.charBest[key]
+    local byRegion = best and best.ladders and best.ladders[self.db.cutoffRegion]
+    return byRegion and byRegion[self.db.cutoffFaction] or nil
+end
+
+--- The running season's name, as the patcher last wrote it.
+function RR:CurrentSeasonName()
+    return self:SeasonDisplayName(SEASON_NAME)
+end
+
+-- ── Season selection for the graph ──────────────────────────────────────────
+-- The graph draws either the running season (db.charHistory) or an archived
+-- one (record.charPoints). Both use the same { {ts, score, thresholds?}, ... }
+-- shape per character, so every drawing path works unchanged - only the table
+-- it reads from differs.
+
+--- Index into db.seasonArchive currently being viewed, or nil for the running
+--- season. Not persisted: reopening the window should show the live season.
+local viewSeasonIndex
+
+--- The per-character point tables the graph should draw right now.
+function RR:GetHistorySet()
+    if viewSeasonIndex then
+        local record = self.db.seasonArchive and self.db.seasonArchive[viewSeasonIndex]
+        if record then return record.charPoints or {} end
+        viewSeasonIndex = nil   -- archive shrank underneath us
+    end
+    return self.db.charHistory or {}
+end
+
+--- Menu-friendly form of the selection: 0 for the running season, otherwise
+--- the archive index. Kept separate from GetViewedSeason so the menu never has
+--- to deal with nil as a data value.
+function RR:GetViewedSeasonValue()
+    return viewSeasonIndex or 0
+end
+
+--- nil while the running season is shown, otherwise the archived record.
+function RR:GetViewedSeason()
+    if not viewSeasonIndex then return nil end
+    return self.db.seasonArchive and self.db.seasonArchive[viewSeasonIndex]
+end
+
+--- @param index number|nil  archive index, or nil for the running season
+function RR:SetViewedSeason(index)
+    viewSeasonIndex = index
+    self:RefreshHistoryGraph()
 end
 
 --- The running season as an archive-shaped record, so the panel can show it
@@ -450,18 +782,32 @@ function RR:GetSeasonArchive()
                 final     = data.final,
                 peakRank  = data.peakRank,
                 finalRank = data.finalRank,
+                peakPct   = data.peakPct,
+                peakAt    = data.peakAt,
+                ended     = data.ended,
+                bestPct      = data.bestPct,
+                bestPctAt    = data.bestPctAt,
+                bestPctScore = data.bestPctScore,
+                bestPctRank  = data.bestPctRank,
+                bestLadders  = data.bestLadders,
+                bestLadderOwn = data.bestLadderOwn,
             })
         end
+        -- Sorted by the closing score, which is what the collapsed row shows.
+        -- Sorting by peak would put a character that faded late above one that
+        -- finished higher, and the list would look wrong without explaining why.
         table.sort(rows, function(a, b)
-            if a.peak == b.peak then return a.name < b.name end
-            return a.peak > b.peak
+            local av, bv = a.final or a.peak, b.final or b.peak
+            if av == bv then return a.name < b.name end
+            return av > bv
         end)
         table.insert(seasons, {
-            name    = record.name,
-            start   = record.start,
-            ended   = record.ended,
-            current = record.current,
-            rows    = rows,
+            name       = record.name,
+            start      = record.start,
+            ended      = record.ended,
+            current    = record.current,
+            endCutoffs = record.endCutoffs,
+            rows       = rows,
         })
     end
 
@@ -481,7 +827,7 @@ end
 
 -- ── Downsampling (Largest Triangle Three Bucket) ────────────────────────────
 
-local function LTTB(data, threshold)
+function LTTB(data, threshold)
     local n = #data
     if n <= threshold then return data end
 
@@ -629,8 +975,124 @@ end
 
 local dropdownMenu
 
+-- ── Season dropdown ─────────────────────────────────────────────────────────
+-- Lists the running season plus every archived one, newest first. Entries map
+-- back to the real db.seasonArchive index, which is in insertion order.
+
+local seasonMenu
+
+-- 0 rather than nil marks the running season, so it can travel as menu entry
+-- data - the menu API treats nil data as "no data" and drops the argument.
+local SEASON_CURRENT = 0
+
+--- Running season first, then the archive newest-first. Every entry is named
+--- after its season - nothing says "current", because the running season moves
+--- on by itself when the patcher advances SEASON_NAME, and a generic label
+--- would then be the only thing not following along.
+local function SeasonEntries()
+    local entries = { { value = SEASON_CURRENT, label = RR:CurrentSeasonName() } }
+    local archive = RR.db.seasonArchive or {}
+    for i = #archive, 1, -1 do
+        entries[#entries + 1] = { value = i, label = RR:SeasonDisplayName(archive[i].name) }
+    end
+    return entries
+end
+
+local function SeasonLabel()
+    local viewed = RR:GetViewedSeason()
+    if viewed then return RR:SeasonDisplayName(viewed.name) end
+    return RR:CurrentSeasonName()
+end
+
+--- The modern Menu system arrived in 11.0. Feature-detect rather than assume:
+--- on a client without it we keep the hand-rolled menu below.
+local function HasNativeDropdown()
+    return C_XMLUtil and C_XMLUtil.GetTemplateInfo
+        and C_XMLUtil.GetTemplateInfo("WowStyle1DropdownTemplate") ~= nil
+end
+
+--- Label for the button: which season the graph is currently drawing.
+local function UpdateSeasonButton()
+    local f = RR.historyFrame
+    local btn = f and f.seasonBtn
+    if not btn then return end
+
+    -- Shown even with nothing archived yet: it is how you learn the feature
+    -- exists, and it names the season you are looking at either way.
+    btn:Show()
+
+    -- The native dropdown rebuilds its entries every time it opens, so only
+    -- the closed-state label needs refreshing here.
+    if btn.SetDefaultText then
+        btn:SetDefaultText(SeasonLabel())
+    else
+        btn:SetText(SeasonLabel())
+    end
+end
+
+local function ToggleSeasonMenu(owner)
+    if seasonMenu and seasonMenu:IsShown() then
+        seasonMenu:Hide()
+        return
+    end
+
+    if not seasonMenu then
+        seasonMenu = CreateFrame("Frame", "RRHistorySeasonMenu", UIParent, "BackdropTemplate")
+        seasonMenu:SetFrameStrata("DIALOG")
+        seasonMenu:SetBackdrop({
+            bgFile   = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8",
+            tile = false, edgeSize = 1,
+            insets = { left = 1, right = 1, top = 1, bottom = 1 },
+        })
+        seasonMenu:SetBackdropColor(0, 0, 0, 1)
+        seasonMenu:SetBackdropBorderColor(0.18, 0.22, 0.28, 1)
+        seasonMenu.rows = {}
+    end
+
+    for _, row in ipairs(seasonMenu.rows) do row:Hide() end
+    wipe(seasonMenu.rows)
+
+    -- Same entry list as the native menu, so the two paths can never disagree
+    -- about naming or ordering.
+    local entries = SeasonEntries()
+    local archive = RR.db.seasonArchive or {}
+
+    local rowH, viewed = 18, RR:GetViewedSeason()
+    for i, entry in ipairs(entries) do
+        local row = CreateFrame("Button", nil, seasonMenu)
+        row:SetHeight(rowH)
+        row:SetPoint("TOPLEFT", seasonMenu, "TOPLEFT", 8, -(6 + (i - 1) * rowH))
+        row:SetPoint("RIGHT", seasonMenu, "RIGHT", -8, 0)
+
+        local label = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        label:SetPoint("LEFT", row, "LEFT", 0, 0)
+        local isActive = (entry.value == SEASON_CURRENT and not viewed)
+            or (entry.value ~= SEASON_CURRENT and viewed == archive[entry.value])
+        label:SetText(isActive and ("|cff00ff00" .. entry.label .. "|r") or entry.label)
+
+        row:SetScript("OnClick", function()
+            seasonMenu:Hide()
+            RR:SetViewedSeason(entry.value ~= SEASON_CURRENT and entry.value or nil)
+        end)
+        row:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
+        row:SetScript("OnLeave", function(self) self:SetAlpha(1) end)
+
+        table.insert(seasonMenu.rows, row)
+    end
+
+    seasonMenu:SetSize(170, 12 + #entries * rowH)
+    seasonMenu:ClearAllPoints()
+    seasonMenu:SetPoint("TOPRIGHT", owner, "BOTTOMRIGHT", 0, -2)
+    seasonMenu:Show()
+end
+
 local function BuildCharDropdown()
     if not charToggleArea or not RR.db or not RR.db.charHistory then return end
+
+    -- Mirrors whichever season the graph is showing, so an archived season
+    -- lists the characters that played it rather than today's roster.
+    local set = RR:GetHistorySet()
 
     local currentKey = CharKey()
     local visible = RR.db.historyVisible or {}
@@ -638,7 +1100,7 @@ local function BuildCharDropdown()
     -- Count how many are visible for the button label.
     local visCount = 0
     for key, on in pairs(visible) do
-        if on and RR.db.charHistory[key] then visCount = visCount + 1 end
+        if on and set[key] then visCount = visCount + 1 end
     end
 
     -- Create or update the dropdown button.
@@ -688,7 +1150,7 @@ local function BuildCharDropdown()
         dropdownMenu.rows = {}
 
         local keys = {}
-        for k, history in pairs(RR.db.charHistory) do
+        for k, history in pairs(set) do
             if history and #history > 0 then
                 table.insert(keys, k)
             end
@@ -762,7 +1224,7 @@ end
 
 -- ── Graph Creation ──────────────────────────────────────────────────────────
 
---- Side tabs in the window's own flat style — the Blizzard tab template
+--- Side tabs in the window's own flat style - the Blizzard tab template
 --- carries gold chrome that would clash here. They are anchored to the outside
 --- of the left edge and overlap the border by a pixel so they read as attached.
 local function BuildTabStrip(f)
@@ -843,7 +1305,7 @@ local function CreateHistoryFrame()
         RR.db.historyPosition = { point = point, x = x, y = y }
     end)
 
-    -- Title — shared chrome, retitled by SetHistoryTab to name the active view.
+    -- Title - shared chrome, retitled by SetHistoryTab to name the active view.
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -10)
     f.title = title
@@ -874,19 +1336,20 @@ local function CreateHistoryFrame()
     f.deltaHeader = deltaHeader
 
     -- Time range buttons
+    -- Widths are per entry: "Season" does not fit the 44px the day buttons use.
     local ranges = {
-        { label = "3d",     days = 3 },
-        { label = "7d",     days = 7 },
-        { label = "14d",    days = 14 },
-        { label = "30d",    days = 30 },
-        { label = "Season", days = 0 },
+        { label = "3d",     days = 3,  width = 40 },
+        { label = "7d",     days = 7,  width = 40 },
+        { label = "14d",    days = 14, width = 40 },
+        { label = "30d",    days = 30, width = 40 },
+        { label = "Season", days = 0,  width = 62 },
     }
     f.activeRange = 0
 
     local prevBtn
     for _, r in ipairs(ranges) do
         local btn = CreateFrame("Button", nil, historyPane, "UIPanelButtonTemplate")
-        btn:SetSize(44, 20)
+        btn:SetSize(r.width or 44, 20)
         btn:SetText(r.label)
         if prevBtn then
             btn:SetPoint("LEFT", prevBtn, "RIGHT", 4, 0)
@@ -899,6 +1362,35 @@ local function CreateHistoryFrame()
         end)
         prevBtn = btn
     end
+
+    -- Season selector, right-aligned on the mode-button row. Blizzard's own
+    -- dropdown where the client has it: it handles placement, Escape and
+    -- click-away, which the fallback below does not.
+    local seasonBtn
+    if HasNativeDropdown() then
+        seasonBtn = CreateFrame("DropdownButton", nil, historyPane, "WowStyle1DropdownTemplate")
+        seasonBtn:SetWidth(160)
+        seasonBtn:SetDefaultText(RR:CurrentSeasonName())
+        seasonBtn:SetupMenu(function(_, rootDescription)
+            for _, entry in ipairs(SeasonEntries()) do
+                rootDescription:CreateRadio(
+                    entry.label,
+                    function(value) return RR:GetViewedSeasonValue() == value end,
+                    function(value)
+                        RR:SetViewedSeason(value ~= SEASON_CURRENT and value or nil)
+                    end,
+                    entry.value)
+            end
+        end)
+    else
+        seasonBtn = CreateFrame("Button", nil, historyPane, "UIPanelButtonTemplate")
+        seasonBtn:SetSize(160, 20)
+        -- Labelled up front so it never flashes blank before the first refresh.
+        seasonBtn:SetText(RR:CurrentSeasonName())
+        seasonBtn:SetScript("OnClick", function(self) ToggleSeasonMenu(self) end)
+    end
+    seasonBtn:SetPoint("TOPRIGHT", historyPane, "TOPRIGHT", -30, -52)
+    f.seasonBtn = seasonBtn
 
     -- Character toggle area (to the right of range buttons).
     charToggleArea = CreateFrame("Frame", nil, historyPane)
@@ -1167,7 +1659,8 @@ local function UpdateDeltaHeader(self)
     if not header then return end
 
     local key = CharKey()
-    local history = key and self.db.charHistory and self.db.charHistory[key]
+    local set = self:GetHistorySet()
+    local history = key and set[key]
     if not history or #history < 2 then
         header:SetText("")
         return
@@ -1181,7 +1674,7 @@ local function UpdateDeltaHeader(self)
     local nextRank     = self:GetNextRank(currentRank)
 
     -- First entry at or after cutoff. If nothing in range (player idle), use
-    -- the latest entry — delta vs. self = 0, which matches reality.
+    -- the latest entry - delta vs. self = 0, which matches reality.
     local pastIdx = #history
     for i = 1, #history do
         if history[i][1] >= cutoff then
@@ -1247,6 +1740,7 @@ function RR:RefreshHistoryGraph()
         return
     end
     if self.historyFrame.emptyText then self.historyFrame.emptyText:Hide() end
+    UpdateSeasonButton()
     self:UpdateHistoryModeButtons()
     UpdateDeltaHeader(self)
 
@@ -1258,7 +1752,7 @@ function RR:RefreshHistoryGraph()
 
     -- Collect all visible characters' data.
     local allCharData = {}  -- { { key=, data=, isCurrentChar= }, ... }
-    for key, history in pairs(self.db.charHistory or {}) do
+    for key, history in pairs(self:GetHistorySet()) do
         if visible[key] and history and #history > 0 then
             EnsureSeasonStart(history)
             table.insert(allCharData, {
@@ -1342,7 +1836,8 @@ function RR:RefreshHistoryGraph()
         -- "Real progression": each point is (score gained) − (next-rank cutoff
         -- movement) since range start. Zero = treading water.
         local key = CharKey()
-        local history = key and self.db.charHistory and self.db.charHistory[key]
+        local set = self:GetHistorySet()
+        local history = key and set[key]
 
         local entries = {}
         if history then
@@ -1411,7 +1906,8 @@ function RR:RefreshHistoryGraph()
         -- thresholds actually changed (see RecordScoreSnapshot), so we get one
         -- point per genuine cutoff movement.
         local key = CharKey()
-        local history = key and self.db.charHistory and self.db.charHistory[key]
+        local set = self:GetHistorySet()
+        local history = key and set[key]
 
         local events = {}
         if history then

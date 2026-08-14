@@ -3,8 +3,8 @@
 Patch RaiderRanked Lua files from thresholds.json.
 
 Targets:
-  - RaiderRanked/Cutoffs.lua     (new — 9 region/faction blocks)
-  - RaiderRanked/RankSystem.lua  (seed fallback — mirrors primary region/all)
+  - RaiderRanked/Cutoffs.lua     (new - 9 region/faction blocks)
+  - RaiderRanked/RankSystem.lua  (seed fallback - mirrors primary region/all)
   - RaiderRanked/ScoreHistory.lua (SEASON_START / SEASON_NAME constants)
 
 Preserves comments, whitespace, and line-by-line formatting. Skips
@@ -171,7 +171,7 @@ def patch_score_history(lua_path, season_meta):
         f"local SEASON_START = time({{ year = {dt.year}, month = {dt.month}, "
         f"day = {dt.day}, hour = {dt.hour}, min = {dt.minute}, sec = 0 }})\n"
     )
-    # Display label for the season archive. Escaped defensively — the name
+    # Display label for the season archive. Escaped defensively - the name
     # comes straight from Raider.IO and lands inside a Lua string literal.
     lua_name = season_name.replace("\\", "\\\\").replace('"', '\\"')
     new_name = f'local SEASON_NAME = "{lua_name}"\n'
@@ -219,14 +219,14 @@ def main():
 
     addon_dir = rank_system_path.parent
 
-    # 1. Cutoffs.lua — the multi-region / multi-faction data table.
+    # 1. Cutoffs.lua - the multi-region / multi-faction data table.
     cutoffs_path = addon_dir / "Cutoffs.lua"
     if cutoffs_path.exists() and data.get("cutoffs"):
         patch_cutoffs(cutoffs_path, data["cutoffs"])
     else:
-        print(f"WARN: {cutoffs_path} or data.cutoffs missing — skipping multi-region patch")
+        print(f"WARN: {cutoffs_path} or data.cutoffs missing - skipping multi-region patch")
 
-    # 2. RankSystem.lua — keep seed values in sync with primary region/all
+    # 2. RankSystem.lua - keep seed values in sync with primary region/all
     # so first-frame fallback stays reasonably fresh.
     patch_rank_system(
         rank_system_path,
@@ -234,7 +234,7 @@ def main():
         data.get("top100Score"),
     )
 
-    # 3. ScoreHistory.lua — SEASON_START constant.
+    # 3. ScoreHistory.lua - SEASON_START constant.
     score_history_path = addon_dir / "ScoreHistory.lua"
     if score_history_path.exists():
         season_meta = {

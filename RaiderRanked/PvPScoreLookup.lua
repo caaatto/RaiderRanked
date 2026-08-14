@@ -110,7 +110,7 @@ local CATEGORY_INSTANCE = LE_PARTY_CATEGORY_INSTANCE or 2
 --- IsInGroup()/IsInRaid() without a category argument check BOTH the home and
 --- the instance group, so inside a scenario, delve, LFR or battleground they
 --- return true while no home party exists.  Sending "PARTY"/"RAID" there throws
---- ERR_NOT_IN_GROUP ("You are not in a party") — see issue #15.  Instanced
+--- ERR_NOT_IN_GROUP ("You are not in a party") - see issue #15.  Instanced
 --- groups must use "INSTANCE_CHAT", and it is checked first because a home
 --- party that zones into an instance is in both categories at once.
 ---@return string|nil channel  nil when the player is not grouped at all
@@ -136,7 +136,7 @@ end
 
 --- Dumps the raw party categories and the resolved channel, then fires one
 --- broadcast so a bad channel surfaces as a chat error straight away.
---- The interesting case is home=false / instance=true — that is exactly where
+--- The interesting case is home=false / instance=true - that is exactly where
 --- the old "PARTY"/"RAID" code produced ERR_NOT_IN_GROUP.
 function RR:DebugGroupChannel()
     local zone, instanceType = GetInstanceInfo()
@@ -155,7 +155,7 @@ function RR:DebugGroupChannel()
 
     if channel then
         self:BroadcastPvPScores()
-        print("  broadcast sent — no red error above means the channel is valid.")
+        print("  broadcast sent. No red error above means the channel is valid.")
     else
         print("  not grouped, nothing sent.")
     end
@@ -182,7 +182,7 @@ local function ProcessNextInspect()
     local key = CacheKey(unit)
     if key and IsCacheFresh(key) then return end
 
-    -- Check range — CanInspect returns true if we can inspect the unit.
+    -- Check range - CanInspect returns true if we can inspect the unit.
     if not CanInspect(unit) then return end
 
     inspectBusy = true
@@ -273,7 +273,7 @@ function RR:GetPvPScoreForUnit(unit)
         return entry.maxCR > 0 and entry.maxCR or nil
     end
 
-    -- Not cached — enqueue inspect as fallback.
+    -- Not cached - enqueue inspect as fallback.
     self:EnqueuePvPInspect(unit)
     return nil
 end

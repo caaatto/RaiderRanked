@@ -38,7 +38,7 @@ end
 
 function Suite:print()
     local prefix = "|cff00ccffRaiderRanked Tests|r"
-    print(prefix .. " – " .. self.name)
+    print(prefix .. " - " .. self.name)
     for _, r in ipairs(self.results) do
         if r.ok then
             print(string.format("  |cff00ff00[PASS]|r %s", r.label))
@@ -55,31 +55,28 @@ end
 local function runRankSystemTests()
     local s = Suite.new("RankSystem")
 
-    -- GetRankForScore: boundary checks
-    s:eq("score 3200 → Challenger",    RR:GetRankForScore(3200).id, "CHALLENGER")
-    s:eq("score 3199 → Grandmaster",   RR:GetRankForScore(3199).id, "GRANDMASTER")
-    s:eq("score 2800 → Grandmaster",   RR:GetRankForScore(2800).id, "GRANDMASTER")
-    s:eq("score 2799 → Master",        RR:GetRankForScore(2799).id, "MASTER")
-    s:eq("score 2400 → Master",        RR:GetRankForScore(2400).id, "MASTER")
-    s:eq("score 2399 → Diamond",       RR:GetRankForScore(2399).id, "DIAMOND")
-    s:eq("score 2100 → Diamond",       RR:GetRankForScore(2100).id, "DIAMOND")
-    s:eq("score 2099 → Emerald",       RR:GetRankForScore(2099).id, "EMERALD")
-    s:eq("score 1800 → Emerald",       RR:GetRankForScore(1800).id, "EMERALD")
-    s:eq("score 1799 → Platinum",      RR:GetRankForScore(1799).id, "PLATINUM")
-    s:eq("score 1500 → Platinum",      RR:GetRankForScore(1500).id, "PLATINUM")
-    s:eq("score 1499 → Gold",          RR:GetRankForScore(1499).id, "GOLD")
-    s:eq("score 1200 → Gold",          RR:GetRankForScore(1200).id, "GOLD")
-    s:eq("score 1199 → Silver",        RR:GetRankForScore(1199).id, "SILVER")
-    s:eq("score  800 → Silver",        RR:GetRankForScore(800).id,  "SILVER")
-    s:eq("score  799 → Bronze",        RR:GetRankForScore(799).id,  "BRONZE")
-    s:eq("score  400 → Bronze",        RR:GetRankForScore(400).id,  "BRONZE")
-    s:eq("score  399 → Iron",          RR:GetRankForScore(399).id,  "IRON")
-    s:eq("score    1 → Iron",          RR:GetRankForScore(1).id,    "IRON")
-    s:eq("score    0 → Unranked",      RR:GetRankForScore(0).id,    "UNRANKED")
+    -- GetRankForScore: boundaries derived from the live thresholds rather than
+    -- written out. Cutoffs are repatched daily, so fixed numbers here go stale
+    -- within days and the suite then reports failures that are not failures.
+    for i, rank in ipairs(RR.RANKS) do
+        if rank.id ~= "UNRANKED" then
+            s:eq(rank.id .. ": its own threshold lands on it",
+                RR:GetRankForScore(rank.minScore).id, rank.id)
+
+            -- One below must fall to the next rank down, whichever that is.
+            local below = RR.RANKS[i + 1]
+            if below and rank.minScore > 0 then
+                s:eq(rank.id .. ": one below drops to " .. below.id,
+                    RR:GetRankForScore(rank.minScore - 1).id, below.id)
+            end
+        end
+    end
 
     -- Nil and edge cases
-    s:eq("score nil  → Unranked",      RR:GetRankForScore(nil).id,  "UNRANKED")
-    s:eq("score 9999 → Challenger",    RR:GetRankForScore(9999).id, "CHALLENGER")
+    s:eq("score 0 → Unranked",   RR:GetRankForScore(0).id,   "UNRANKED")
+    s:eq("score nil → Unranked", RR:GetRankForScore(nil).id, "UNRANKED")
+    s:eq("far above the top threshold → Challenger",
+        RR:GetRankForScore(RR.RANK_BY_ID["CHALLENGER"].minScore + 5000).id, "CHALLENGER")
 
     -- FormatRankName: must return a non-empty coloured string
     local rank = RR.RANK_BY_ID["GOLD"]
@@ -181,7 +178,7 @@ local function runUITests()
     s:assert("RankFrame has nameText", RaiderRankedFrame.nameText ~= nil)
     s:assert("RankFrame has scoreText", RaiderRankedFrame.scoreText ~= nil)
 
-    -- Minimap button (LibDBIcon — may be nil if db.minimap.hide was true at load)
+    -- Minimap button (LibDBIcon - may be nil if db.minimap.hide was true at load)
     local icon = LibStub and LibStub("LibDBIcon-1.0", true)
     s:assert("MinimapButton registered", icon and icon:IsRegistered("RaiderRanked"))
 
@@ -309,6 +306,42 @@ local function runSeasonArchiveTests()
 
     s:eq("Old points pruned", #RR.db.charHistory["Alpha-Realm"], 1)
     s:eq("New-season point survives", RR.db.charHistory["Alpha-Realm"][1][2], 300)
+
+    -- Percentile interpolation: a score sitting exactly on a threshold must
+    -- land on that band's edge, and the figure must fall as the score rises.
+    local pctDiamond = RR:ScorePercentile(2000, T)   -- DIAMOND starts at 2000
+    local pctMaster  = RR:ScorePercentile(3500, T)   -- MASTER starts at 3500
+    local pctMid     = RR:ScorePercentile(2750, T)   -- between the two
+    s:eq("Score on the Diamond threshold is the band's bottom edge", pctDiamond, 4)
+    s:eq("Score on the Master threshold is the band's bottom edge", pctMaster, 1)
+    s:assert("Percentile falls as score rises",
+        pctMid and pctMid < pctDiamond and pctMid > pctMaster)
+    s:assert("A zero score has no percentile", RR:ScorePercentile(0, T) == nil)
+    s:eq("Archived peak carries its percentile", type(alpha and alpha.peakPct), "number")
+
+    -- Points are moved into the record, not deleted - the graph must still be
+    -- able to draw a past season.
+    local pts = rec and rec.charPoints and rec.charPoints["Alpha-Realm"]
+    s:assert("Archived season kept its points", type(pts) == "table" and #pts > 0)
+    if pts then
+        local newest = pts[#pts][1]
+        s:assert("Archived points stop before the new season", newest < seasonStart)
+    end
+    s:assert("Second character's points archived too",
+        rec and rec.charPoints and rec.charPoints["Beta-Realm"] ~= nil)
+
+    -- The graph reads through GetHistorySet, so selecting an archived season
+    -- must hand back that season's points instead of the live ones.
+    -- pcall: SetViewedSeason triggers a redraw, and the graph is pointed at a
+    -- throwaway database here. The selection is what matters, not the paint.
+    local okSel = pcall(RR.SetViewedSeason, RR, 1)
+    s:assert("Selecting an archived season does not error", okSel)
+    s:assert("Viewing an archived season swaps the data set",
+        RR:GetHistorySet()["Alpha-Realm"] == pts)
+    s:assert("GetViewedSeason reports the record", RR:GetViewedSeason() == rec)
+    pcall(RR.SetViewedSeason, RR, nil)
+    s:assert("Back to the running season",
+        RR:GetHistorySet() == RR.db.charHistory and RR:GetViewedSeason() == nil)
     s:eq("seasonStart adopted", RR.db.seasonStart, seasonStart)
     s:assert("Tracked peaks cleared", next(RR.db.charPeak) == nil)
 
@@ -334,7 +367,7 @@ local function runSeasonArchiveTests()
         late and late[1].chars["Gamma-Realm"].peak, 1900)
 
     -- Fresh install mid-season: nothing predates SEASON_START, so nothing is
-    -- filed away — the running season just gets adopted.
+    -- filed away - the running season just gets adopted.
     RR.db = {
         charHistory = {
             ["Delta-Realm"] = { { seasonStart, 0 }, { seasonStart + 5, 800, T } },
@@ -344,8 +377,67 @@ local function runSeasonArchiveTests()
     s:assert("Fresh install archives nothing", RR.db.seasonArchive == nil)
     s:eq("Fresh install adopts the season", RR.db.seasonStart, seasonStart)
 
+    -- Best rank is captured live, with every ladder's percentile taken at that
+    -- moment, so a past result stays comparable without historical cutoffs.
+    RR.db = {
+        charHistory = {}, charPeak = {},
+        cutoffRegion = "eu", cutoffFaction = "all",
+    }
+    RR:RecordBestRank("Live-Realm", 3000)
+    local own = RR:GetOwnBest("Live-Realm")
+    s:assert("A best rank is recorded for the configured ladder", own ~= nil)
+    s:eq("It keeps the score", own and own.score, 3000)
+    s:assert("It timestamps the moment", type(own and own.ts) == "number")
+
+    local ladderCount = 0
+    for _, byFaction in pairs(RR.db.charBest["Live-Realm"].ladders or {}) do
+        for _ in pairs(byFaction) do ladderCount = ladderCount + 1 end
+    end
+    s:eq("Every ladder tracked separately", ladderCount, 9)
+
+    -- Each ladder keeps its own best, and a worse result never overwrites one.
+    local before = own.pct
+    RR:RecordBestRank("Live-Realm", 1000)
+    s:eq("A worse score leaves the best alone", RR:GetOwnBest("Live-Realm").score, 3000)
+    RR:RecordBestRank("Live-Realm", 4000)
+    s:eq("A better score replaces it", RR:GetOwnBest("Live-Realm").score, 4000)
+    s:assert("Percentile improved with it", RR:GetOwnBest("Live-Realm").pct < before)
+
+    -- Everything below is what another player's client looks like, not this
+    -- one: no history at all, and data recorded before thresholds were stored.
+    RR.db = { charHistory = {} }
+    local okEmpty = pcall(RR.GetSeasonArchive, RR)
+    s:assert("Empty database survives the seasons view", okEmpty)
+    local emptySeasons = RR:GetSeasonArchive()
+    s:eq("Fresh install still lists the running season", #emptySeasons, 1)
+    s:eq("Running season has no characters yet", #emptySeasons[1].rows, 0)
+
+    RR.db = {
+        charHistory = { ["Solo-Realm"] = { { seasonStart + 1, 2500 } } },  -- no thresholds
+    }
+    local okBare = pcall(RR.GetSeasonArchive, RR)
+    s:assert("History without stored thresholds survives", okBare)
+    local bare = RR:GetSeasonArchive()[1].rows[1]
+    s:assert("Character still appears", bare and bare.peak == 2500)
+
     RR.db = realDB
     s:assert("Real database restored", RR.db == realDB)
+
+    -- Ladder comparison must either answer for every offered combination or
+    -- say it cannot. A partial table would show the player's own ladder under
+    -- another ladder's name.
+    for _, region in ipairs(RR.CUTOFF_REGIONS) do
+        for _, faction in ipairs(RR.CUTOFF_FACTIONS) do
+            local th = RR:CutoffThresholds(region, faction)
+            s:assert("Cutoffs complete for " .. region .. "/" .. faction,
+                th ~= nil and th.CHALLENGER and th.IRON)
+            if th then
+                local pct = RR:ScorePercentile(3000, th)
+                s:assert("Percentile resolves on " .. region .. "/" .. faction,
+                    type(pct) == "number" and pct > 0 and pct <= 100)
+            end
+        end
+    end
 
     s:print()
     return s.failed

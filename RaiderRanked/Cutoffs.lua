@@ -2,7 +2,7 @@
 -- Per-region / per-faction M+ rating cutoffs.
 --
 -- Auto-patched by scripts/patch_addon.py from thresholds.json. Each
--- RR.CUTOFFS.<region>.<faction> block is a discrete patch target — do
+-- RR.CUTOFFS.<region>.<faction> block is a discrete patch target - do
 -- not reformat the minScore/wingScore lines or the patcher will miss
 -- them.
 --

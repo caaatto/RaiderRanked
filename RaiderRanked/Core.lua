@@ -52,7 +52,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "PLAYER_ENTERING_WORLD" then
         RR:OnEnteringWorld()
     elseif event == "CHALLENGE_MODE_COMPLETED" then
-        -- Score isn't updated instantly — check at increasing intervals to catch
+        -- Score isn't updated instantly - check at increasing intervals to catch
         -- the server update regardless of latency.
         C_Timer.After(3,  function() RR:RefreshPlayerRank() end)
         C_Timer.After(10, function() RR:RefreshPlayerRank() end)
@@ -107,7 +107,7 @@ function RR:OnAddonLoaded()
     if RaiderRankedDB.showMinimap == false then
         RaiderRankedDB.minimap.hide = true
     end
-    -- Validate cutoff selection — saved values could be stale or corrupt.
+    -- Validate cutoff selection - saved values could be stale or corrupt.
     if not (self.CUTOFFS and self.CUTOFFS[RaiderRankedDB.cutoffRegion]
             and self.CUTOFFS[RaiderRankedDB.cutoffRegion][RaiderRankedDB.cutoffFaction]) then
         RaiderRankedDB.cutoffRegion  = "eu"
@@ -131,7 +131,7 @@ function RR:OnAddonLoaded()
     local changed = false
     for id, newDefault in pairs(defaults) do
         if newDefault ~= (oldDefaults[id] or 0) then
-            -- Code default changed — update saved value unless user customised it.
+            -- Code default changed - update saved value unless user customised it.
             if not oldDefaults[id] or saved[id] == oldDefaults[id] then
                 saved[id] = newDefault
                 changed = true
@@ -259,7 +259,7 @@ function RR:GetScoreForUnit(unit)
     if RaiderIO and RaiderIO.GetProfile then
         local ok, profile = pcall(RaiderIO.GetProfile, unit)
         if ok and type(profile) == "table" then
-            -- Field name varies across RaiderIO versions — try all known ones.
+            -- Field name varies across RaiderIO versions - try all known ones.
             if profile.mplusCurrent and type(profile.mplusCurrent.score) == "number" then
                 return profile.mplusCurrent.score
             end
@@ -331,7 +331,7 @@ function RR:RefreshPlayerRank()
         end
     end
 
-    -- Start PvE Top-100 aura ticker (idempotent — only starts once).
+    -- Start PvE Top-100 aura ticker (idempotent - only starts once).
     if self.StartPveAuraTicker then
         self:StartPveAuraTicker()
     end
@@ -416,9 +416,6 @@ function RR:HandleSlashCommand(msg)
     if msg == "" or msg == "show" then
         self:ToggleRankFrame(true)
 
-    elseif msg == "hide" then
-        self:ToggleRankFrame(false)
-
     elseif msg == "tooltip" then
         self.db.showInTooltip = not self.db.showInTooltip
         print(string.format("|cff00ccffRaiderRanked|r Tooltip: %s",
@@ -454,7 +451,7 @@ function RR:HandleSlashCommand(msg)
         self:RefreshHistoryGraph()
 
     elseif msg:match("^anim%s*(.*)$") then
-        -- /rr anim [FROM] TO  — e.g. "/rr anim bronze emerald"
+        -- /rr anim [FROM] TO  - e.g. "/rr anim bronze emerald"
         local args = msg:match("^anim%s*(.*)$")
         local parts = {}
         for w in args:gmatch("%S+") do table.insert(parts, w) end
@@ -468,16 +465,19 @@ function RR:HandleSlashCommand(msg)
             print("  e.g. /rr anim challenger")
         end
 
-    elseif msg == "wingsdbg" then
-        self:DebugWings()
+    -- The wing diagnostics live under "wings" rather than as three top-level
+    -- commands. Longer patterns first: "wings 200" must not swallow them.
+    elseif msg:match("^wings%s+debug") then
+        local unit = msg:match("^wings%s+debug%s*(%S*)$")
+        if unit and unit ~= "" then
+            self:DebugUnitWings(unit)
+        else
+            self:DebugWings()
+        end
 
-    elseif msg:match("^unitdbg") then
-        local unit = msg:match("^unitdbg%s*(%S*)$") or "target"
-        self:DebugUnitWings(unit == "" and "target" or unit)
-
-    elseif msg:match("^wingstest") then
-        local unit = msg:match("^wingstest%s*(%S*)$") or "target"
-        self:TestUnitWings(unit == "" and "target" or unit)
+    elseif msg:match("^wings%s+test") then
+        local unit = msg:match("^wings%s+test%s*(%S*)$")
+        self:TestUnitWings((unit and unit ~= "") and unit or "target")
 
     elseif msg:match("^wings%s+%d+$") then
         self:SetPortraitWingsSize(msg:match("^wings%s+(%d+)$"))
@@ -552,12 +552,16 @@ function RR:HandleSlashCommand(msg)
     elseif msg == "pvpdebug" then
         self:DebugPvPScore()
 
-    elseif msg == "testpve" then
-        print("|cff00ccffRaiderRanked|r Playing PvE Top-100 aura...")
-        self:PlayPveAura()
-
     elseif msg:match("^pvpaura%s+test%s+%S+$") then
-        self:TestPvPAura(msg:match("^pvpaura%s+test%s+(%S+)$"))
+        -- "pve" previews the Top 100 aura, which is the same kind of thing and
+        -- no longer needs a command of its own.
+        local which = msg:match("^pvpaura%s+test%s+(%S+)$")
+        if which:lower() == "pve" then
+            print("|cff00ccffRaiderRanked|r Playing PvE Top-100 aura...")
+            self:PlayPveAura()
+        else
+            self:TestPvPAura(which)
+        end
 
     elseif msg == "pvpaura stop" then
         self:StopPvPAuraTest()
@@ -565,34 +569,40 @@ function RR:HandleSlashCommand(msg)
     elseif msg:match("^pvpaura%s+%d+$") then
         self:SetPvPAuraSize(msg:match("^pvpaura%s+(%d+)$"))
 
+    -- Diagnostics live behind their own listing. They are worth keeping for
+    -- support cases, but a third of the help being developer tools made the
+    -- addon look more complicated than it is.
+    elseif msg == "dev" then
+        print("|cff00ccffRaiderRanked|r Diagnostics:")
+        print("  /rr debug              - dump raw score API output")
+        print("  /rr groupdbg           - party categories + broadcast channel")
+        print("  /rr pvpdebug           - PvP rating per bracket")
+        print("  /rr wings debug [unit] - wing anchor, draw order and scale")
+        print("  /rr wings test [unit]  - force wings onto a unit to check placement")
+        print("  /rr test               - run the in-game test suite")
+
     else
         print("|cff00ccffRaiderRanked|r Commands:")
-        print("  /rr             – toggle rank frame")
-        print("  /rr tooltip     – toggle tooltip display")
-        print("  /rr ranks       – list current thresholds")
-        print("  /rr ladder      – rank ladder panel (all ranks + your position)")
-        print("  /rr seasons     – past season results per character")
-        print("  /rr set <ID> <score>  – e.g. /rr set CHALLENGER 3500")
-        print("  /rr cutoff              – show active region/faction")
-        print("  /rr cutoff <region> <faction>  – eu|us|all  all|horde|alliance")
-        print("  /rr reset       – restore default thresholds")
-        print("  /rr anim [from] to – preview rank-up animation")
-        print("  /rr animpos        – move rank-up pop-up (right-click save, Esc discard)")
-        print("  /rr animpos reset  – restore default pop-up position")
-        print("  /rr wings <size>   – resize portrait wings (default 160)")
-        print("  /rr wingsdbg       – debug wings anchor/visibility")
-        print("  /rr wingstest [unit] – force wings onto a target to check placement")
-        print("  /rr history     – toggle score history graph")
-        print("  /rr history clear – clear all history data")
-        print("  /rr classcolors – toggle class colours in the history graph")
-        print("  /rr debug       – dump raw score API output")
-        print("  /rr groupdbg    – dump party categories + broadcast channel")
-        print("  /rr pvp             – toggle PvP rank frame")
-        print("  /rr pvpranks    – list PvP rank thresholds")
-        print("  /rr pvpdebug    – dump PvP rating per bracket")
-        print("  /rr pvpaura test <rank> – preview aura (e.g. gladiator)")
-        print("  /rr pvpaura stop       – stop aura preview")
-        print("  /rr pvpaura <size>     – resize PvP portrait aura (40–400)")
-        print("  /rr test        – run all in-game tests")
+        print("  /rr                    - toggle rank frame")
+        print("  /rr tooltip            - toggle tooltip display")
+        print("  /rr ranks              - list current thresholds")
+        print("  /rr ladder             - rank ladder, all ranks and your position")
+        print("  /rr seasons            - season results per character")
+        print("  /rr history            - toggle score history graph")
+        print("  /rr history clear      - clear all history data")
+        print("  /rr classcolors        - class colours in the history graph")
+        print("  /rr cutoff             - show active region/faction")
+        print("  /rr cutoff <region> <faction>  - eu|us|all  all|horde|alliance")
+        print("  /rr set <ID> <score>   - override a threshold")
+        print("  /rr reset              - restore default thresholds")
+        print("  /rr anim [from] to     - preview rank-up animation")
+        print("  /rr animpos            - move the rank-up pop-up")
+        print("  /rr wings <size>       - resize portrait wings (default 160)")
+        print("  /rr pvp                - toggle PvP rank frame")
+        print("  /rr pvpranks           - list PvP rank thresholds")
+        print("  /rr pvpaura test <rank|pve> - preview an aura")
+        print("  /rr pvpaura stop       - stop aura preview")
+        print("  /rr pvpaura <size>     - resize PvP portrait aura (40-400)")
+        print("  |cff888888/rr dev              - diagnostics|r")
     end
 end

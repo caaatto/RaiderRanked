@@ -13,7 +13,6 @@ Download from [CurseForge](https://www.curseforge.com/wow/addons/raiderranked) o
 | Command | Description |
 |---|---|
 | `/rr` | Toggle rank frame |
-| `/rr hide` | Hide rank frame |
 | `/rr tooltip` | Toggle rank in tooltips |
 | `/rr ranks` | Show current thresholds |
 | `/rr ladder` | Open on the Rank Ladder tab |
@@ -28,15 +27,15 @@ Download from [CurseForge](https://www.curseforge.com/wow/addons/raiderranked) o
 | `/rr anim [from] to` | Preview rank-up animation |
 | `/rr animpos` | Move the rank-up pop-up (right-click saves, Escape discards) |
 | `/rr animpos reset` | Restore default pop-up position |
-| `/rr wings <size>` | Resize portrait wings (20–600) |
+| `/rr wings <size>` | Resize portrait wings (20-600) |
 | `/rr pvp` | Toggle PvP rank frame |
 | `/rr pvpranks` | Show PvP rank thresholds |
-| `/rr pvpaura test <rank>` | Preview a PvP aura (e.g. gladiator) |
+| `/rr pvpaura test <rank\|pve>` | Preview a PvP aura, or the PvE Top 100 aura |
 | `/rr pvpaura stop` | Stop aura preview |
-| `/rr pvpaura <size>` | Resize PvP aura (40–400) |
+| `/rr pvpaura <size>` | Resize PvP aura (40-400) |
 | `/rr test` | Run in-game test suite |
 
-Diagnostics: `/rr debug` (raw score API output), `/rr groupdbg` (party categories and the resolved broadcast channel), `/rr pvpdebug` (PvP rating per bracket), `/rr wingsdbg` and `/rr unitdbg [unit]` (wing anchor, draw order and scale), `/rr wingstest [unit]` (force wings onto any target to check placement).
+Diagnostics are listed separately under `/rr dev`, so the main help stays about the addon rather than about debugging it: `/rr debug` (raw score API output), `/rr groupdbg` (party categories and the resolved broadcast channel), `/rr pvpdebug` (PvP rating per bracket), `/rr wings debug [unit]` (wing anchor, draw order and scale) and `/rr wings test [unit]` (force wings onto a unit to check placement).
 
 ## Settings
 
@@ -87,9 +86,9 @@ The M+ seasonal title is awarded by Blizzard at the top 0.1% **per faction per r
 
 | Region | Faction |
 |---|---|
-| `eu` — Europe | `all` — combined |
-| `us` — North America | `horde` |
-| `all` — population-weighted merge of US + EU | `alliance` |
+| `eu` - Europe | `all` - combined |
+| `us` - North America | `horde` |
+| `all` - population-weighted merge of US + EU | `alliance` |
 
 The active combination is selected in the Settings panel (ESC → Options → AddOns → RaiderRanked) or via `/rr cutoff <region> <faction>`, and the rank frame shows it as a muted subtitle (for example `EU / Alliance`). Default is `eu / all`.
 
@@ -97,29 +96,50 @@ Switching sets migrates your thresholds: values that still match the previous de
 
 ## Score History
 
-`/rr history` (or right-click on the minimap button) opens a window with three tabs — **Score History**, **Rank Ladder** and **Seasons**. It reopens on whichever tab you used last, and Escape closes it.
+`/rr history` (or right-click on the minimap button) opens a window with three tabs - **Score History**, **Rank Ladder** and **Seasons**. It reopens on whichever tab you used last, and Escape closes it.
 
 The Score History tab graphs your M+ score over the season, with rank-coloured bands in the background. Data is stored account-wide, so alts appear alongside your main.
 
-- **Ranges** — 3d, 7d, 14d, 30d, or the full season
-- **Score** — raw score over time; solo as a filled area chart, multiple characters as one line each
-- **Progress** — score gained minus how far the next rank's cutoff moved, so a shifting cutoff cannot masquerade as progress
-- **Cutoffs** — the rank thresholds themselves over time
-- **Characters** — a dropdown toggles which characters are drawn
+- **Ranges** - 3d, 7d, 14d, 30d, or the full season
+- **Score** - raw score over time; solo as a filled area chart, multiple characters as one line each
+- **Progress** - score gained minus how far the next rank's cutoff moved, so a shifting cutoff cannot masquerade as progress
+- **Cutoffs** - the rank thresholds themselves over time
+- **Characters** - a dropdown toggles which characters are drawn
+- **Season** - a dropdown on the right picks which season to draw; it appears
+  once a season has been archived
+
+A score of 0 means "no runs this season", not a result, so it is never plotted
+as one. Without that, every character would drop to the floor the moment a
+season ends. Each season's curve still starts at zero from its own start date.
 
 Enable *Class colours in score history* (or `/rr classcolors`) to colour each character's line by its class. A character's class is only known once it has been logged into with the addon installed; anything unknown falls back to the default palette.
 
 ## Season Archive
 
-The **Seasons** tab lists the best score each of your characters reached, per season, newest first. The running season is always the first block and updates live; the finished ones below it are frozen records.
+The **Seasons** tab lists where each of your characters finished, per season, newest first. The running season is the first block and updates live; the finished ones below it are frozen records.
 
-When the daily threshold job moves the season forward, the addon notices at the next login and condenses the finished season into that archive — best score, closing score, and the rank each of those was worth **under that season's own cutoffs**, so a record does not silently change meaning when next season's thresholds land. The season's history points are dropped at the same time, since the archive is the durable copy and the graph only ever draws the current season anyway.
+Each row is the closing result: the score you ended on and the rank it was worth against the cutoffs in force at that point. Clicking a character unfolds the peak, which is usually a different day and often a different rank:
+
+```
+best score 3420 on 29 Apr 2026
+best rank Master, top 0.98% on 15 Apr 2026
+```
+
+Those two lines differ because cutoffs climb all season. A score set in April can outrank a higher score set in August, so the best score and the best rank are tracked separately, each against the cutoffs that were live at the time.
+
+Two dropdowns at the top pick a region and faction to measure against. They start on your own setting. Where a result was recorded on that ladder, its real figure is shown; otherwise the line says what the score would be worth there, either today or at that season's close.
+
+The percentile is interpolated: each rank owns a fixed percentile band, and where the score sat between that rank's cutoff and the next one maps onto where it sat inside the band. It is an approximation, but it comes from the same cutoffs the rank does, so the two can never contradict each other. Challenger always reads as the top 0.1%, since nothing finer can be resolved inside the top band.
+
+When the daily threshold job moves the season forward, the addon notices at the next login and condenses the finished season into that archive - best score, closing score, and the rank each of those was worth **under that season's own cutoffs**, so a record does not silently change meaning when next season's thresholds land.
+
+The season's graph points move into the archive at the same time, downsampled to keep the saved variables bounded. They are not discarded: the Season dropdown in the Score History tab draws any archived season exactly as it drew the live one.
 
 The best score is tracked continuously rather than read back out of the graph data, so it survives the 500-point-per-character history cap even on a long season. Characters you never logged into with the addon installed have nothing to archive and simply do not appear.
 
 ## Rank-Up Pop-Up
 
-The promotion animation is a two-phase crossfade: the old rank's exit sheet plays on top while the new rank's entrance sheet fades in underneath, followed by a flash, the rank name, and a glow pulse. It is a non-blocking overlay — it captures neither mouse nor keyboard.
+The promotion animation is a two-phase crossfade: the old rank's exit sheet plays on top while the new rank's entrance sheet fades in underneath, followed by a flash, the rank name, and a glow pulse. It is a non-blocking overlay - it captures neither mouse nor keyboard.
 
 To reposition it, use `/rr animpos` or the *Unlock rank-up pop-up position* setting. A box appears where the pop-up will be drawn:
 
@@ -157,8 +177,8 @@ Both the active expansion and the active season are auto-detected from Raider.IO
 
 `## Version` in `RaiderRanked.toc` is the single source of truth, and it is what the WoW AddOns list shows.
 
-- **Feature release** — bump the minor by hand and commit: `1.11.4` → `1.12.0`
-- **Automated release** — CI increments the last component from wherever that leaves it: `1.12.0` → `1.12.1` → `1.12.2`
+- **Feature release** - bump the minor by hand and commit: `1.11.4` → `1.12.0`
+- **Automated release** - CI increments the last component from wherever that leaves it: `1.12.0` → `1.12.1` → `1.12.2`
 
 Every release commits the bumped TOC, tags it `v<version>`, and uploads to CurseForge as `Raider Ranked <version>`, so the CurseForge file list, the git tags, and the in-game version all name the same build.
 
@@ -168,9 +188,9 @@ Threshold runs that find no changes upload nothing. To ship a build that only ch
 
 1. Get a [CurseForge API token](https://legacy.curseforge.com/account/api-tokens)
 2. Set these in the repo settings:
-   - **Secret** `CF_API_TOKEN` — your CurseForge API token
-   - **Variable** `CF_PROJECT_ID` — your CurseForge project ID
-   - **Variable** `CF_GAME_VERSIONS` — comma-separated game version IDs (e.g. `11567,11565`)
+   - **Secret** `CF_API_TOKEN` - your CurseForge API token
+   - **Variable** `CF_PROJECT_ID` - your CurseForge project ID
+   - **Variable** `CF_GAME_VERSIONS` - comma-separated game version IDs (e.g. `11567,11565`)
 3. The workflow runs daily at 00:00 UTC, or trigger manually from the Actions tab
 
 Game version IDs can be found via:
@@ -180,4 +200,4 @@ curl -H "X-Api-Token: YOUR_TOKEN" https://wow.curseforge.com/api/game/versions
 
 ### Client compatibility
 
-`## Interface` in `RaiderRanked.toc` lists every client build the addon is flagged compatible with. When a patch lands, append the new number (12.0.7 → `120007`) — a stale list only shows the addon as out of date, it does not break it. The TOC is read at client start, so the flag clears on a full restart rather than a `/reload`.
+`## Interface` in `RaiderRanked.toc` lists every client build the addon is flagged compatible with. When a patch lands, append the new number (12.0.7 → `120007`) - a stale list only shows the addon as out of date, it does not break it. The TOC is read at client start, so the flag clears on a full restart rather than a `/reload`.
