@@ -177,11 +177,81 @@ def _patch_rank_block(lines, start_idx, thresholds, top100):
     return len(lines) - 1
 
 
+PREV_BLOCK_RE = re.compile(r'^RR\.PREV_CUTOFFS = \{.*?^\}\n', re.S | re.M)
+PREV_NAME_RE = re.compile(r'^RR\.PREV_SEASON_NAME = ".*?"\n', re.M)
+SEASON_NAME_RE = re.compile(r'^\s*local\s+SEASON_NAME\s*=\s*"(.*?)"', re.M)
+
+
+def read_current_season_name(score_history_path):
+    """The season the addon currently believes it is in, read before the
+    patcher overwrites it. A mismatch against the incoming name is what tells
+    us a rollover is happening.
+    """
+    try:
+        with open(score_history_path, encoding="utf-8") as f:
+            m = SEASON_NAME_RE.search(f.read())
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
+def rotate_previous_cutoffs(cutoffs_path, closing_season_name):
+    """Copy the cutoffs that are about to be replaced into RR.PREV_CUTOFFS.
+
+    Called only when the season changes, which is the one moment those values
+    still exist. Afterwards they are gone, and a player who installs during the
+    new season would have no way to rank a result from the old one.
+    """
+    with open(cutoffs_path, encoding="utf-8") as f:
+        text = f.read()
+
+    sets = {}
+    for m in re.finditer(r'RR\.CUTOFFS\.(\w+)\.(\w+) = \{(.*?)\n\}', text, re.S):
+        region, faction, body = m.groups()
+        sets[(region, faction)] = re.findall(
+            r'(\w+)\s*=\s*\{ minScore =\s*(\d+),\s*wingScore =\s*(\d+) \}', body)
+
+    if not sets:
+        print("WARN: no cutoff blocks found, leaving PREV_CUTOFFS alone", file=sys.stderr)
+        return
+
+    lines = ["RR.PREV_CUTOFFS = {"]
+    for region in ("eu", "us", "all"):
+        lines.append(f"    {region} = {{")
+        for faction in ("all", "horde", "alliance"):
+            ranks = sets.get((region, faction))
+            if not ranks:
+                print(f"WARN: {region}.{faction} missing, PREV_CUTOFFS not rotated",
+                      file=sys.stderr)
+                return
+            lines.append(f"        {faction} = {{")
+            for rank_id, min_score, wing_score in ranks:
+                lines.append(
+                    f"            {rank_id:<12} = "
+                    f"{{ minScore = {min_score:>5}, wingScore = {wing_score:>5} }},")
+            lines.append("        },")
+        lines.append("    },")
+    lines.append("}")
+    block = "\n".join(lines) + "\n"
+
+    if not PREV_BLOCK_RE.search(text):
+        print("WARN: RR.PREV_CUTOFFS block not found, skipping rotation", file=sys.stderr)
+        return
+
+    text = PREV_BLOCK_RE.sub(lambda _: block, text, count=1)
+    safe_name = (closing_season_name or "Season").replace("\\", "\\\\").replace('"', '\\"')
+    text = PREV_NAME_RE.sub(f'RR.PREV_SEASON_NAME = "{safe_name}"\n', text, count=1)
+
+    with open(cutoffs_path, "w", encoding="utf-8") as f:
+        f.write(text)
+    print(f"Rotated PREV_CUTOFFS to the closing values of {closing_season_name!r}")
+
+
 def patch_cutoffs(lua_path, cutoffs):
     """Walk Cutoffs.lua and patch every RR.CUTOFFS.<region>.<faction>
     block whose (region, faction) is present in cutoffs.
     """
-    with open(lua_path) as f:
+    with open(lua_path, encoding="utf-8") as f:
         lines = f.readlines()
 
     i = 0
@@ -202,14 +272,14 @@ def patch_cutoffs(lua_path, cutoffs):
                 continue
         i += 1
 
-    with open(lua_path, "w") as f:
+    with open(lua_path, "w", encoding="utf-8") as f:
         f.writelines(lines)
     print(f"Patched {lua_path}: {', '.join(patched_sections) or '(no sections matched)'}")
 
 
 def patch_rank_system(lua_path, thresholds, top100_score):
     """Legacy multi-line rank block patcher for RankSystem.lua seed values."""
-    with open(lua_path) as f:
+    with open(lua_path, encoding="utf-8") as f:
         lines = f.readlines()
 
     current_rank = None
@@ -237,7 +307,7 @@ def patch_rank_system(lua_path, thresholds, top100_score):
         if re.match(r'\s*\},?\s*$', line):
             current_rank = None
 
-    with open(lua_path, "w") as f:
+    with open(lua_path, "w", encoding="utf-8") as f:
         f.writelines(lines)
     print(f"Patched {lua_path}")
 
@@ -270,7 +340,7 @@ def patch_score_history(lua_path, season_meta):
     lua_name = season_name.replace("\\", "\\\\").replace('"', '\\"')
     new_name = f'local SEASON_NAME = "{lua_name}"\n'
 
-    with open(lua_path) as f:
+    with open(lua_path, encoding="utf-8") as f:
         lines = f.readlines()
 
     patched = False
@@ -295,7 +365,7 @@ def patch_score_history(lua_path, season_meta):
         print(f"WARN: SEASON_START line not found in {lua_path}", file=sys.stderr)
         return
 
-    with open(lua_path, "w") as f:
+    with open(lua_path, "w", encoding="utf-8") as f:
         f.writelines(lines)
     print(f"Patched {lua_path}")
 
@@ -308,13 +378,26 @@ def main():
     rank_system_path = Path(sys.argv[1])
     thresholds_path = Path(sys.argv[2])
 
-    with open(thresholds_path) as f:
+    with open(thresholds_path, encoding="utf-8") as f:
         data = json.load(f)
 
     addon_dir = rank_system_path.parent
 
-    # 1. Cutoffs.lua - the multi-region / multi-faction data table.
+    score_history_path = addon_dir / "ScoreHistory.lua"
     cutoffs_path = addon_dir / "Cutoffs.lua"
+
+    # 0. Season rollover. Detected by comparing the name the addon currently
+    #    carries against the incoming one, and handled before anything is
+    #    overwritten: the cutoffs about to be replaced are the closing values
+    #    of the season that just ended, and this is the only moment they exist.
+    incoming_season = data.get("seasonName") or data.get("season")
+    current_season = read_current_season_name(score_history_path)
+    if incoming_season and current_season and incoming_season != current_season:
+        print(f"Season rollover: {current_season!r} -> {incoming_season!r}")
+        if cutoffs_path.exists():
+            rotate_previous_cutoffs(cutoffs_path, current_season)
+
+    # 1. Cutoffs.lua - the multi-region / multi-faction data table.
     if cutoffs_path.exists() and data.get("cutoffs"):
         patch_cutoffs(cutoffs_path, data["cutoffs"])
     else:
