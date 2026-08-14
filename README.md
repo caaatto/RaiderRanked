@@ -281,4 +281,6 @@ curl -H "X-Api-Token: YOUR_TOKEN" https://wow.curseforge.com/api/game/versions
 
 ### Client compatibility
 
-`## Interface` in `RaiderRanked.toc` lists every client build the addon is flagged compatible with. When a patch lands, append the new number (12.0.7 → `120007`) - a stale list only shows the addon as out of date, it does not break it. The TOC is read at client start, so the flag clears on a full restart rather than a `/reload`.
+`## Interface` in `RaiderRanked.toc` lists the client builds the addon is flagged compatible with, currently `120100` for 12.1.0 only. When a patch lands, replace the number (12.1.0 → `120100`) - a stale list only shows the addon as out of date, it does not break it. The TOC is read at client start, so the flag clears on a full restart rather than a `/reload`.
+
+The `CF_GAME_VERSIONS` repository variable is the same statement for CurseForge and has to move with it, since that is what the upload lists the file under. It holds CurseForge's own numeric ids rather than build numbers; the call above maps one to the other (12.1.0 is `16519`).
