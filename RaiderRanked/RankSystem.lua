@@ -217,8 +217,15 @@ RR.RANK_PERCENTILES = {
 RR.TOP_100_SCORE = 4350
 
 --- Returns true if the given score qualifies for Top 100.
+---
+--- Both sides are guarded. A cutoff of 0 means the pipeline had no ranking
+--- data to work from, which happens when a new season is declared before any
+--- runs exist; comparing with >= would then hand the Top 100 aura to every
+--- player, including one with no score at all.
 function RR:IsTop100(score)
-    return score and score >= self.TOP_100_SCORE
+    local cutoff = self.TOP_100_SCORE
+    if not cutoff or cutoff <= 0 then return false end
+    return score ~= nil and score > 0 and score >= cutoff
 end
 
 -- Fallback snapshot of file-load minScore values, used only when Cutoffs.lua

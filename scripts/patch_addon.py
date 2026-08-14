@@ -41,7 +41,11 @@ def _patch_rank_block(lines, start_idx, thresholds, top100):
         if re.match(r'^\}\s*$', line):
             return i
 
-        if top100 is not None:
+        # Only a positive value may be written. A season that Raider.IO has
+        # switched to before it holds any ranking data yields top100Score = 0,
+        # and RR:IsTop100 compares with >=, so a zero would hand the Top 100
+        # aura to every player including those with no score at all.
+        if top100:
             m = re.match(r'(\s*top100Score\s*=\s*)\d+(.*)', line)
             if m:
                 lines[i] = f'{m.group(1)}{top100}{m.group(2)}\n'
@@ -121,7 +125,8 @@ def patch_rank_system(lua_path, thresholds, top100_score):
 
     current_rank = None
     for i, line in enumerate(lines):
-        if top100_score is not None:
+        # Positive only, for the same reason as in _patch_rank_block.
+        if top100_score:
             m = re.match(r'(RR\.TOP_100_SCORE\s*=\s*)\d+(.*)', line)
             if m:
                 lines[i] = f'{m.group(1)}{top100_score}{m.group(2)}\n'

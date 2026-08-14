@@ -78,6 +78,20 @@ local function runRankSystemTests()
     s:eq("far above the top threshold → Challenger",
         RR:GetRankForScore(RR.RANK_BY_ID["CHALLENGER"].minScore + 5000).id, "CHALLENGER")
 
+    -- Top 100: a missing or zero cutoff must never qualify anyone. That value
+    -- appears when a season is declared before any ranking data exists.
+    local savedTop = RR.TOP_100_SCORE
+    RR.TOP_100_SCORE = 0
+    s:assert("zero cutoff qualifies nobody",
+        not RR:IsTop100(0) and not RR:IsTop100(5000))
+    RR.TOP_100_SCORE = nil
+    s:assert("missing cutoff qualifies nobody", not RR:IsTop100(5000))
+    RR.TOP_100_SCORE = 4000
+    s:assert("a real cutoff still works",
+        RR:IsTop100(4000) and RR:IsTop100(4500) and not RR:IsTop100(3999))
+    s:assert("a zero score never qualifies", not RR:IsTop100(0))
+    RR.TOP_100_SCORE = savedTop
+
     -- FormatRankName: must return a non-empty coloured string
     local rank = RR.RANK_BY_ID["GOLD"]
     local formatted = RR:FormatRankName(rank)
