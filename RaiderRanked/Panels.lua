@@ -409,8 +409,8 @@ local function SetDetailRow(row, entry, season)
 
     if stored and stored.pct then
         local rank = stored.rank and RR.RANK_BY_ID[stored.rank]
-        lines[#lines + 1] = string.format("best rank on %s: %s, top %s%%%s",
-            CompareLabel(), RankText(rank), Pct(stored.pct),
+        lines[#lines + 1] = string.format("best rank on %s: %s%s, top %s%%%s",
+            CompareLabel(), RankText(rank), stored.plus and " +" or "", Pct(stored.pct),
             stored.ts and (" on " .. date("%d %b %Y", stored.ts)) or "")
         return Finish(row, lines)
     end
@@ -420,8 +420,9 @@ local function SetDetailRow(row, entry, season)
     -- than vanishing the moment the comparison is switched.
     if entry.bestPct and entry.bestPctAt then
         local bestRank = RR.RANK_BY_ID[entry.bestPctRank]
-        lines[#lines + 1] = string.format("best rank %s, top %s%% on %s",
-            RankText(bestRank), Pct(entry.bestPct), date("%d %b %Y", entry.bestPctAt))
+        lines[#lines + 1] = string.format("best rank %s%s, top %s%% on %s",
+            RankText(bestRank), entry.bestPctPlus and " +" or "",
+            Pct(entry.bestPct), date("%d %b %Y", entry.bestPctAt))
     elseif entry.peakPct then
         lines[#lines + 1] = string.format("roughly top %s%% at that time", Pct(entry.peakPct))
     end
@@ -482,7 +483,7 @@ local function SetCharRow(row, entry, rowId)
     local rank = RR.RANK_BY_ID[entry.finalRank] or RR:GetRankForScore(closing)
     local c = rank.color
     row.icon:SetTexture(rank.icon)
-    row.rankText:SetText(rank.name)
+    row.rankText:SetText(rank.name .. (entry.finalPlus and " +" or ""))
     row.rankText:SetTextColor(c.r, c.g, c.b)
     row.scoreText:SetText(string.format("%.0f", closing))
     row.scoreText:SetTextColor(0.85, 0.85, 0.90)

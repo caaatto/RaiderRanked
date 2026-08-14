@@ -511,6 +511,7 @@ local function CollectSeasonChars(fromTs, toTs)
                 chars[key].bestPctAt    = own.ts
                 chars[key].bestPctScore = own.score
                 chars[key].bestPctRank  = own.rank
+                chars[key].bestPctPlus  = own.plus
             end
         end
     end
@@ -573,6 +574,9 @@ function RR:ArchiveSeasonIfRolled()
         -- the live cutoffs now describe the new season, where everyone is at
         -- zero again.
         endCutoffs = RR:AllCutoffThresholds(),
+        -- Separately, so a closing rank can still be shown with its "+" suffix
+        -- rather than looking like a coarser kind of value than the live one.
+        endWings   = RR:AllCutoffThresholds(true),
     }
 
     -- Points move into the record rather than being deleted, so a past season
@@ -676,11 +680,18 @@ function RR:RecordBestRank(key, score)
                 -- Lower percentile is better. Ties keep the earlier moment:
                 -- reaching a rank first is the achievement, holding it is not.
                 if pct and (not stored or pct < stored.pct) then
+                    -- The "+" half of the bracket is only knowable while the
+                    -- wing thresholds are live, so it is settled here rather
+                    -- than reconstructed later.
+                    local wings = self:CutoffWingScores(region, faction)
+                    local wing = rank and wings and wings[rank.id]
                     thresholdsByFaction[faction] = {
                         pct   = pct,
                         ts    = now,
                         score = score,
                         rank  = rank and rank.id or nil,
+                        plus  = (rank and rank.id ~= "CHALLENGER" and wing
+                                 and score >= wing) or false,
                     }
                 end
             end
@@ -688,15 +699,58 @@ function RR:RecordBestRank(key, score)
     end
 end
 
+--- The shipped previous-season ladder, as flat id -> score tables. Used when
+--- the player has no archive of their own, which is every fresh install and
+--- everyone who was not running the addon through the last rollover.
+---@return table|nil minScores, table|nil wingScores
+function RR:PrevCutoffThresholds(region, faction)
+    local byRegion = self.PREV_CUTOFFS and self.PREV_CUTOFFS[region]
+    local set = byRegion and byRegion[faction]
+    if not set then return nil end
+
+    local mins, wings = {}, {}
+    for _, rank in ipairs(self.RANKS) do
+        if rank.id ~= "UNRANKED" then
+            local entry = set[rank.id]
+            if not entry or not entry.minScore then return nil end
+            mins[rank.id]  = entry.minScore
+            wings[rank.id] = entry.wingScore
+        end
+    end
+    return mins, wings
+end
+
+--- Flat id -> wingScore table, the midpoint that marks the upper half of a
+--- bracket with "+". Kept apart from the minScore table so the percentile and
+--- rank helpers keep taking a plain id -> number map.
+function RR:CutoffWingScores(region, faction)
+    local set = self.GetCutoffSet and self:GetCutoffSet(region, faction)
+    if not set then return nil end
+
+    local out = {}
+    for _, rank in ipairs(self.RANKS) do
+        if rank.id ~= "UNRANKED" then
+            local entry = set[rank.id]
+            if entry and entry.wingScore then
+                out[rank.id] = entry.wingScore
+            end
+        end
+    end
+    return out
+end
+
 --- All nine ladders as flat id -> minScore tables. Snapshotted when a season
 --- is archived, because after the rollover the live cutoffs belong to the new
 --- season and comparing a finished season's score against them is meaningless.
-function RR:AllCutoffThresholds()
+---@param wings boolean|nil  return wingScores instead of minScores
+function RR:AllCutoffThresholds(wings)
     local out = {}
     for _, region in ipairs(self.CUTOFF_REGIONS) do
         out[region] = {}
         for _, faction in ipairs(self.CUTOFF_FACTIONS) do
-            out[region][faction] = self:CutoffThresholds(region, faction)
+            out[region][faction] = wings
+                and self:CutoffWingScores(region, faction)
+                or  self:CutoffThresholds(region, faction)
         end
     end
     return out
@@ -789,6 +843,7 @@ function RR:GetSeasonArchive()
                 bestPctAt    = data.bestPctAt,
                 bestPctScore = data.bestPctScore,
                 bestPctRank  = data.bestPctRank,
+                bestPctPlus  = data.bestPctPlus,
                 bestLadders  = data.bestLadders,
                 bestLadderOwn = data.bestLadderOwn,
             })
@@ -801,6 +856,22 @@ function RR:GetSeasonArchive()
             if av == bv then return a.name < b.name end
             return av > bv
         end)
+        -- The closing rank's "+" comes from the wing thresholds of the season
+        -- it belongs to: the frozen set for an archived season, the live one
+        -- for the season still running.
+        local wings
+        if record.current then
+            wings = RR:CutoffWingScores(RR.db.cutoffRegion, RR.db.cutoffFaction)
+        elseif record.endWings then
+            local byRegion = record.endWings[RR.db.cutoffRegion]
+            wings = byRegion and byRegion[RR.db.cutoffFaction]
+        end
+        for _, row in ipairs(rows) do
+            local wing = wings and row.finalRank and wings[row.finalRank]
+            row.finalPlus = (row.finalRank ~= "CHALLENGER" and wing
+                             and (row.final or row.peak) >= wing) or false
+        end
+
         table.insert(seasons, {
             name       = record.name,
             start      = record.start,

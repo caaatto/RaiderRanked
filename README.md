@@ -45,6 +45,7 @@ Everything below is reachable via ESC → Options → AddOns → RaiderRanked.
 |---|---|---|
 | Show rank frame | on | The draggable rank / score HUD |
 | Show rank in tooltips | on | Rank and M+ score on unit tooltips |
+| Show last season's rank in tooltips | on | Adds what the player finished last season on |
 | Show PvP rank frame | off | Second HUD frame with PvP rank and rating |
 | Show PvP rank in tooltips | off | PvP rank and rating on unit tooltips |
 | Show PvP aura on player portrait | off | Animated aura driven by PvP rating |
@@ -167,6 +168,55 @@ When the daily threshold job moves the season forward, the addon notices at the 
 The season's graph points move into the archive at the same time, downsampled to keep the saved variables bounded. They are not discarded: the Season dropdown in the Score History tab draws any archived season exactly as it drew the live one.
 
 The best score is tracked continuously rather than read back out of the graph data, so it survives the 500-point-per-character history cap even on a long season. Characters you never logged into with the addon installed have nothing to archive and simply do not appear.
+
+## Last Season on Tooltips
+
+The first weeks of a season are the ones where a rank says the least: everyone
+sits at zero or close to it. Unit tooltips therefore carry a second line while
+that lasts, showing what the player finished the previous season on.
+
+```
+RaiderRanked: Grandmaster
+Last season: Master (3180)
+```
+
+Three sources feed it, in that order:
+
+1. **Your own archive** for your own characters, which is exact.
+2. **RaiderIO**, if the player has it installed and has seen that character.
+   This is what makes the line work for strangers.
+3. **The group channel**, as a fallback among people running RaiderRanked, over
+   the same addon-message mechanism the live rank already uses.
+
+The score is turned into a rank with the previous season's own cutoffs, not the
+current ones, so the line means what it meant back then.
+
+The RaiderIO lookup adapts on its own to when RaiderIO rolls over, which lags
+the in-game reset by days. Until it does, its "current" score still holds last
+season's figure and the addon reads it from there; once it switches, the same
+value arrives in its previous-season field and is read from there instead. No
+update is needed on either day.
+
+Which of the two it is gets decided on your own character, where both numbers
+are known: if what RaiderIO reports as your current score is the score you
+closed last season on, their snapshot has not moved yet; if it is what you are
+scoring right now, it has. That stays true no matter what you score in the new
+season, so the line survives the opening day rather than disappearing with your
+first timed key.
+
+Someone who did not play last season at all has neither number to compare, and
+would otherwise have to guess on everyone else's behalf. For them the shipped
+data answers it: the season the addon calls current and the season whose closing
+cutoffs it carries are written by the same daily job, so while those two names
+agree, that job has not seen the rollover and neither has RaiderIO. `/rr dev`
+shows both names next to the verdict.
+
+The addon's own copy of the closing cutoffs is rotated by the threshold job at
+the moment the season turns over, which is the only point at which those values
+still exist.
+
+Only max-level characters can be meaningfully unranked, so lower-level units
+get no rank line at all rather than a misleading one.
 
 ## Rank-Up Pop-Up
 
