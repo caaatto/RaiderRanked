@@ -117,6 +117,28 @@ local function HideRRTooltip()
     if rrTooltip then rrTooltip:Hide() end
 end
 
+--- Whether the cursor is on a frame and that frame is the one receiving it.
+---
+--- IsMouseOver is pure geometry: it keeps returning true when something is
+--- drawn on top, so a panel opening over the rank frame, the world map being
+--- the obvious one, would leave the cursor "on" a frame it can no longer
+--- reach. Asking who actually holds the mouse is what separates the two.
+local function MouseIsOn(frame)
+    if not frame or not frame:IsVisible() or not frame:IsMouseOver() then
+        return false
+    end
+    if frame.IsMouseMotionFocus then
+        return frame:IsMouseMotionFocus()
+    end
+    if GetMouseFoci then
+        for _, region in ipairs(GetMouseFoci() or {}) do
+            if region == frame then return true end
+        end
+        return false
+    end
+    return true
+end
+
 -- ── Rank Frame ───────────────────────────────────────────────────────────────
 
 local rankFrame
@@ -141,13 +163,16 @@ local function CreateRankFrame()
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
     local didDrag = false
+    local dragging = false
     f:SetScript("OnDragStart", function(self)
         if RR.db.frameLocked then return end
         didDrag = true
+        dragging = true
         self:StartMoving()
     end)
     f:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
+        dragging = false
         local point, _, _, x, y = self:GetPoint()
         RR.db.framePosition = { point = point, x = x, y = y }
     end)
@@ -214,9 +239,14 @@ local function CreateRankFrame()
     local currentState   -- "lock", "frame", or nil
     local function UpdateTooltip()
         local newState
-        if lockBtn:IsShown() and lockBtn:IsMouseOver() then
+        -- While dragging, the frame is under the cursor by definition and the
+        -- mouse belongs to the drag rather than to any frame, so the hover is
+        -- taken as given.
+        if dragging then
+            newState = "frame"
+        elseif lockBtn:IsShown() and MouseIsOn(lockBtn) then
             newState = "lock"
-        elseif f:IsMouseOver() then
+        elseif MouseIsOn(f) then
             newState = "frame"
         else
             newState = nil
@@ -247,17 +277,27 @@ local function CreateRankFrame()
         else
             tooltipLines = nil
             HideRRTooltip()
+            -- The button is part of the same hover, so it goes with it.
+            if not dragging then lockBtn:Hide() end
         end
     end
 
     f:HookScript("OnUpdate", function()
-        -- Catch the one OnEnter race: f:OnEnter just showed lockBtn and
-        -- the cursor was already geometrically over it, so lockBtn:OnEnter
-        -- never fires (no mouse movement event). Flip to the lock state
-        -- here. All other transitions are handled by OnEnter/OnLeave.
-        if currentState == "frame" and lockBtn:IsShown() and lockBtn:IsMouseOver() then
-            UpdateTooltip()
-        end
+        -- Re-checked every tick while something is shown, because OnLeave
+        -- cannot be relied on to end a hover. It does not fire when another
+        -- frame is raised over this one without the cursor moving, which is
+        -- what opening the map or any other panel does, and the tooltip would
+        -- otherwise stay up until the cursor happened to cross the frame
+        -- again. This also covers the OnEnter race where f:OnEnter has just
+        -- shown lockBtn under a cursor that is already there, so the button
+        -- never sees an OnEnter of its own, and the reverse case of the panel
+        -- closing again and the hover resuming.
+        --
+        -- Unconditional on purpose: guarding it on a tooltip already being up
+        -- would only heal the way out of a hover, not the way back into one.
+        -- It is three cheap calls that return immediately unless the state
+        -- actually changed.
+        UpdateTooltip()
         -- Side flipping during drag.
         if not tooltipLines then return end
         local side = DesiredSide()
@@ -272,7 +312,7 @@ local function CreateRankFrame()
     end)
     lockBtn:SetScript("OnLeave", function()
         UpdateTooltip()
-        if not f:IsMouseOver() then lockBtn:Hide() end
+        if not MouseIsOn(f) then lockBtn:Hide() end
     end)
 
     -- Rank icon.
@@ -325,7 +365,7 @@ local function CreateRankFrame()
     end)
     f:SetScript("OnLeave", function(self)
         UpdateTooltip()
-        if not self:IsMouseOver() and not lockBtn:IsMouseOver() then
+        if not MouseIsOn(self) and not MouseIsOn(lockBtn) then
             lockBtn:Hide()
         end
     end)
@@ -647,6 +687,12 @@ local function CreatePvPRankFrame()
         GameTooltip:Show()
     end)
     f:SetScript("OnLeave", GameTooltip_Hide)
+    -- Right-click hides this frame from under the cursor, and a frame hidden
+    -- that way never sees OnLeave, so its tooltip would be left standing.
+    -- Only cleared while it is still ours; by then something else may own it.
+    f:HookScript("OnHide", function(self)
+        if GameTooltip:GetOwner() == self then GameTooltip:Hide() end
+    end)
 
     return f
 end
