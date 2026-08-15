@@ -53,14 +53,14 @@ RR.CUTOFFS.eu.alliance = {
     DIAMOND     = { minScore = 3830, wingScore = 3925 },
     EMERALD     = { minScore = 3578, wingScore = 3704 },
     PLATINUM    = { minScore = 3214, wingScore = 3357 },
-    GOLD        = { minScore = 2822, wingScore = 3013 },
+    GOLD        = { minScore = 2822, wingScore = 3014 },
     SILVER      = { minScore = 1718, wingScore = 2519 },
     BRONZE      = { minScore =  413, wingScore =  1006 },
     IRON        = { minScore =    1, wingScore =  230 },
 }
 
 RR.CUTOFFS.us.all = {
-    top100Score = 4312,
+    top100Score = 4313,
     CHALLENGER  = { minScore = 4210, wingScore = 4228 },
     GRANDMASTER = { minScore = 4030, wingScore = 4076 },
     MASTER      = { minScore = 3960, wingScore = 3984 },
@@ -74,9 +74,9 @@ RR.CUTOFFS.us.all = {
 }
 
 RR.CUTOFFS.us.horde = {
-    top100Score = 4312,
+    top100Score = 4313,
     CHALLENGER  = { minScore = 4032, wingScore = 4228 },
-    GRANDMASTER = { minScore = 3983, wingScore = 4008 },
+    GRANDMASTER = { minScore = 3983, wingScore = 4007 },
     MASTER      = { minScore = 3811, wingScore = 3897 },
     DIAMOND     = { minScore = 3649, wingScore = 3730 },
     EMERALD     = { minScore = 3434, wingScore = 3542 },
@@ -88,9 +88,9 @@ RR.CUTOFFS.us.horde = {
 }
 
 RR.CUTOFFS.us.alliance = {
-    top100Score = 4312,
-    CHALLENGER  = { minScore = 4225, wingScore = 4228 },
-    GRANDMASTER = { minScore = 4172, wingScore = 4198 },
+    top100Score = 4313,
+    CHALLENGER  = { minScore = 4226, wingScore = 4228 },
+    GRANDMASTER = { minScore = 4172, wingScore = 4199 },
     MASTER      = { minScore = 3984, wingScore = 4078 },
     DIAMOND     = { minScore = 3794, wingScore = 3889 },
     EMERALD     = { minScore = 3540, wingScore = 3667 },
@@ -131,13 +131,13 @@ RR.CUTOFFS.all.horde = {
 
 RR.CUTOFFS.all.alliance = {
     top100Score = 4350,
-    CHALLENGER  = { minScore = 4241, wingScore = 4243 },
+    CHALLENGER  = { minScore = 4242, wingScore = 4243 },
     GRANDMASTER = { minScore = 4189, wingScore = 4215 },
     MASTER      = { minScore = 4004, wingScore = 4096 },
     DIAMOND     = { minScore = 3814, wingScore = 3909 },
     EMERALD     = { minScore = 3562, wingScore = 3688 },
     PLATINUM    = { minScore = 3193, wingScore = 3338 },
-    GOLD        = { minScore = 2780, wingScore = 2984 },
+    GOLD        = { minScore = 2780, wingScore = 2985 },
     SILVER      = { minScore = 1590, wingScore = 2426 },
     BRONZE      = { minScore =  382, wingScore =  927 },
     IRON        = { minScore =    1, wingScore =  206 },
