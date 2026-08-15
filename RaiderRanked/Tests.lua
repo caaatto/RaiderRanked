@@ -143,8 +143,14 @@ local function runCoreTests()
     s:assert("db.showFrame is boolean", type(RR.db.showFrame) == "boolean")
 
     -- Stash real globals
-    local realRIO      = RaiderIO
-    local realBlizzAPI = C_PlayerInfo
+    local realRIO       = RaiderIO
+    local realBlizzAPI  = C_PlayerInfo
+    local realUnitLevel = UnitLevel
+
+    -- The character the suite happens to be run on must not decide the result.
+    -- GetScoreForUnit refuses to report a score below MIN_SCORED_LEVEL, so on
+    -- an alt every case below would come back nil and read as a broken addon.
+    UnitLevel = function() return RR.MIN_SCORED_LEVEL end
 
     -- Blizzard native API: reads currentSeasonScore
     C_PlayerInfo = { GetPlayerMythicPlusRatingSummary = function() return { currentSeasonScore = 2886 } end }
@@ -174,9 +180,20 @@ local function runCoreTests()
     s:assert("GetRankForUnit returns rank table", rank ~= nil and rank.id ~= nil)
     s:eq("GetRankForUnit score=0 when no API", score, 0)
 
+    -- The gate itself, so lowering it silently cannot go unnoticed.
+    C_PlayerInfo = { GetPlayerMythicPlusRatingSummary = function() return { currentSeasonScore = 2886 } end }
+    RaiderIO = nil
+    UnitLevel = function() return RR.MIN_SCORED_LEVEL - 1 end
+    s:eq("GetScoreForUnit ignores a character below the scored level",
+         RR:GetScoreForUnit("player"), nil)
+    UnitLevel = function() return RR.MIN_SCORED_LEVEL end
+    s:eq("GetScoreForUnit reports one at the scored level",
+         RR:GetScoreForUnit("player"), 2886)
+
     -- Restore
     C_PlayerInfo = realBlizzAPI
     RaiderIO     = realRIO
+    UnitLevel    = realUnitLevel
 
     s:print()
     return s.failed
@@ -185,25 +202,32 @@ end
 local function runUITests()
     local s = Suite.new("UI")
 
-    -- Rank frame should exist after login
-    s:assert("RankFrame global exists", RaiderRankedFrame ~= nil)
-    s:assert("RankFrame is a Frame", type(RaiderRankedFrame) == "table")
-    s:assert("RankFrame has icon texture", RaiderRankedFrame.icon ~= nil)
-    s:assert("RankFrame has nameText", RaiderRankedFrame.nameText ~= nil)
-    s:assert("RankFrame has scoreText", RaiderRankedFrame.scoreText ~= nil)
+    -- Rank frame should exist after login. Its absence is itself the finding,
+    -- so it is reported rather than walked into: indexing it anyway would end
+    -- the run on the spot and hide everything the other suites have to say.
+    local frame = RaiderRankedFrame
+    s:assert("RankFrame global exists", frame ~= nil)
+    if frame then
+        s:assert("RankFrame is a Frame", type(frame) == "table")
+        s:assert("RankFrame has icon texture", frame.icon ~= nil)
+        s:assert("RankFrame has nameText", frame.nameText ~= nil)
+        s:assert("RankFrame has scoreText", frame.scoreText ~= nil)
+    end
 
     -- Minimap button (LibDBIcon - may be nil if db.minimap.hide was true at load)
     local icon = LibStub and LibStub("LibDBIcon-1.0", true)
     s:assert("MinimapButton registered", icon and icon:IsRegistered("RaiderRanked"))
 
     -- ToggleRankFrame: round-trip show/hide
-    local wasShown = RaiderRankedFrame:IsShown()
-    RR:ToggleRankFrame(false)
-    s:assert("ToggleRankFrame(false) hides frame", not RaiderRankedFrame:IsShown())
-    RR:ToggleRankFrame(true)
-    s:assert("ToggleRankFrame(true) shows frame", RaiderRankedFrame:IsShown())
-    -- Restore original state.
-    RR:ToggleRankFrame(wasShown)
+    if frame then
+        local wasShown = frame:IsShown()
+        RR:ToggleRankFrame(false)
+        s:assert("ToggleRankFrame(false) hides frame", not frame:IsShown())
+        RR:ToggleRankFrame(true)
+        s:assert("ToggleRankFrame(true) shows frame", frame:IsShown())
+        -- Restore original state.
+        RR:ToggleRankFrame(wasShown)
+    end
 
     -- UpdateRankFrame: must not error
     local ok = pcall(RR.UpdateRankFrame, RR)
@@ -461,16 +485,41 @@ end
 
 function RR:RunTests()
     print("|cff00ccffRaiderRanked|r ── Running tests ──────────────────────")
-    local totalFailed = 0
-    totalFailed = totalFailed + runRankSystemTests()
-    totalFailed = totalFailed + runCoreTests()
-    totalFailed = totalFailed + runUITests()
-    totalFailed = totalFailed + runPanelTests()
-    totalFailed = totalFailed + runSeasonArchiveTests()
+
+    local suites = {
+        { "Rank system",   runRankSystemTests },
+        { "Core",          runCoreTests },
+        { "UI",            runUITests },
+        { "Panels",        runPanelTests },
+        { "Season archive", runSeasonArchiveTests },
+    }
+
+    -- Each suite is run under pcall. An error inside one used to abort the
+    -- whole command, and since every suite prints only at its end, the result
+    -- was an empty chat frame and a lone error popup: the one outcome that
+    -- looks like nothing happened at all. A broken suite now counts as a
+    -- failure, names itself, and the remaining ones still report.
+    local totalFailed, crashed = 0, 0
+    for _, entry in ipairs(suites) do
+        local name, run = entry[1], entry[2]
+        local ok, result = pcall(run)
+        if ok then
+            totalFailed = totalFailed + (result or 0)
+        else
+            crashed = crashed + 1
+            print(string.format("|cffff4444%s suite could not run:|r %s", name, tostring(result)))
+        end
+    end
+
     print("────────────────────────────────────────────────────")
-    if totalFailed == 0 then
+    if totalFailed == 0 and crashed == 0 then
         print("|cff00ff00All tests passed.|r")
     else
-        print(string.format("|cffff4444%d test(s) FAILED.|r", totalFailed))
+        if totalFailed > 0 then
+            print(string.format("|cffff4444%d test(s) FAILED.|r", totalFailed))
+        end
+        if crashed > 0 then
+            print(string.format("|cffff4444%d suite(s) errored - copy the line above.|r", crashed))
+        end
     end
 end
