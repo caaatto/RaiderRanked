@@ -99,7 +99,11 @@ jobs:
           print(f"version: {m.group(1)} -> {new}")
           PY
 
-      - name: Commit and tag
+      # Committed locally only. Nothing is pushed or tagged until the upload has
+      # gone through, so a failed upload leaves no half-released state behind:
+      # the repository would otherwise claim a version that never shipped, and
+      # a re-run would collide with its own tag.
+      - name: Commit
         if: steps.diff.outputs.release == 'true'
         id: commit
         env:
@@ -116,11 +120,8 @@ jobs:
           fi
 
           git commit -m "$MSG"
-          git tag "v${VERSION}"
-          echo "hash=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
           echo "msg=$MSG" >> "$GITHUB_OUTPUT"
-          git push origin HEAD
-          git push origin "v${VERSION}"
+          echo "hash=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Package addon
         if: steps.diff.outputs.release == 'true'
@@ -149,8 +150,49 @@ jobs:
             --argjson gv "[${{ vars.CF_GAME_VERSIONS }}]" \
             '{changelog: $cl, changelogType: "text", displayName: ("Raider Ranked " + $v), gameVersions: $gv, releaseType: "release"}')
 
-          curl -f -X POST \
-            "https://wow.curseforge.com/api/projects/${{ vars.CF_PROJECT_ID }}/upload-file" \
-            -H "X-Api-Token: $CF_API_TOKEN" \
-            -F "metadata=$METADATA" \
-            -F "file=@RaiderRanked.zip"
+          # Their upload endpoint returns a 500 often enough to be worth sitting
+          # out. The response body carries the actual reason, which -f throws
+          # away, so the status is read separately and the body always printed.
+          for attempt in 1 2 3 4; do
+            STATUS=$(curl -s -o response.json -w '%{http_code}' -X POST \
+              "https://wow.curseforge.com/api/projects/${{ vars.CF_PROJECT_ID }}/upload-file" \
+              -H "X-Api-Token: $CF_API_TOKEN" \
+              -F "metadata=$METADATA" \
+              -F "file=@RaiderRanked.zip")
+
+            echo "attempt ${attempt}: HTTP ${STATUS}"
+            cat response.json; echo
+
+            case "$STATUS" in
+              2*) exit 0 ;;
+              # Anything they reject outright will be rejected again, so only
+              # server-side failures are worth another try.
+              5*|000) sleep $((attempt * 20)) ;;
+              *) echo "::error::CurseForge rejected the upload (HTTP ${STATUS})"; exit 1 ;;
+            esac
+          done
+
+          echo "::error::CurseForge upload failed after 4 attempts"
+          exit 1
+
+      - name: Push commit and tag
+        if: steps.diff.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Rebase before pushing: a manual push during the run would otherwise
+          # reject this one, which is how a release once ended up published but
+          # unrecorded. The tag is cut after the rebase so it names the commit
+          # that actually lands.
+          for attempt in 1 2 3; do
+            git pull --rebase origin main
+            git tag -f "v${VERSION}"
+            if git push origin HEAD; then
+              git push origin "v${VERSION}"
+              exit 0
+            fi
+            echo "push rejected, retrying"
+          done
+
+          echo "::error::could not push the release commit"
+          exit 1
