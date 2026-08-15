@@ -234,7 +234,28 @@ end
 
 local function CacheFresh(key)
     local entry = RR.prevCache[key]
-    return entry and (GetTime() - entry.timestamp) < CACHE_TTL
+    if not entry then return false end
+    if (GetTime() - entry.timestamp) < CACHE_TTL then return true end
+    -- Dropped rather than merely ignored: a stale entry has no further use and
+    -- keeping it is what turns this table into a record of everyone ever seen.
+    RR.prevCache[key] = nil
+    return false
+end
+
+--- Clears everything past its lifetime.
+---
+--- The read path alone cannot keep this bounded: entries arrive for every
+--- group member who runs the addon, and most of them are never asked about
+--- again, so nothing would ever revisit them. Over an evening of pugging that
+--- is thousands of names held for a value that stopped being usable after
+--- fifteen minutes. Swept from the broadcast ticker, which is already running.
+local function PruneCache()
+    local now = GetTime()
+    for key, entry in pairs(RR.prevCache) do
+        if not entry or (now - (entry.timestamp or 0)) >= CACHE_TTL then
+            RR.prevCache[key] = nil
+        end
+    end
 end
 
 --- Last season's score for a unit, and where it came from.
@@ -409,6 +430,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if not broadcastTicker then
             broadcastTicker = C_Timer.NewTicker(BROADCAST_INTERVAL, function()
                 RR:BroadcastPreviousSeason()
+                PruneCache()
             end)
         end
 

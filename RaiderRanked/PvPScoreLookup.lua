@@ -34,7 +34,26 @@ end
 
 local function IsCacheFresh(key)
     local entry = RR.pvpCache[key]
-    return entry and (GetTime() - entry.timestamp) < CACHE_TTL
+    if not entry then return false end
+    if (GetTime() - entry.timestamp) < CACHE_TTL then return true end
+    -- Dropped rather than merely ignored, so a stale entry cannot outlive its
+    -- usefulness by the rest of the session.
+    RR.pvpCache[key] = nil
+    return false
+end
+
+--- Clears everything past its lifetime.
+---
+--- Entries land here for every player inspected or heard from, and most are
+--- never asked about a second time, so the read path alone would never revisit
+--- them. Swept from the broadcast ticker below, which already runs.
+local function PruneCache()
+    local now = GetTime()
+    for key, entry in pairs(RR.pvpCache) do
+        if not entry or (now - (entry.timestamp or 0)) >= CACHE_TTL then
+            RR.pvpCache[key] = nil
+        end
+    end
 end
 
 local function SetCache(key, brackets, maxCR)
@@ -388,4 +407,5 @@ end)
 -- Periodic broadcast while in a group (BroadcastPvPScores no-ops when solo).
 C_Timer.NewTicker(BROADCAST_INTERVAL, function()
     RR:BroadcastPvPScores()
+    PruneCache()
 end)
