@@ -958,16 +958,31 @@ local MAX_LEVEL_SCAN_DEPTH = 10
 
 --- Highest frame level anywhere inside `frame`, ignoring `skip` and its
 --- subtree. Reading a Blizzard frame's hierarchy is taint-free.
-local function MaxLevelIn(frame, skip, depth)
-    local max = frame:GetFrameLevel()
-    if depth <= 0 then return max end
-    for _, child in ipairs({ frame:GetChildren() }) do
+local MaxLevelIn
+
+--- Walks the children handed in as varargs rather than packed into a table.
+---
+--- This is the addon's hottest path by a wide margin: the mirror ticker calls
+--- it four times a second for every overlaid unit frame, and it recurses ten
+--- levels through a Blizzard frame tree that is dozens of nodes wide. Packing
+--- each node's children into a table produced one throwaway table per node
+--- visited, which is thousands per second. select() reads the same values off
+--- the stack and allocates nothing.
+local function MaxLevelAmong(max, skip, depth, ...)
+    for i = 1, select("#", ...) do
+        local child = select(i, ...)
         if child ~= skip then
             local level = MaxLevelIn(child, skip, depth - 1)
             if level > max then max = level end
         end
     end
     return max
+end
+
+function MaxLevelIn(frame, skip, depth)
+    local max = frame:GetFrameLevel()
+    if depth <= 0 then return max end
+    return MaxLevelAmong(max, skip, depth, frame:GetChildren())
 end
 
 local STRATA_ORDER = {
