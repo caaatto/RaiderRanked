@@ -341,6 +341,50 @@ end
 -- ── Debug ─────────────────────────────────────────────────────────────────────
 
 
+--- Where the addon's memory actually sits, and whether it is still moving.
+---
+--- GetAddOnMemoryUsage counts allocations that have not been collected yet, so
+--- the raw figure rises and falls on its own and a rising reading proves
+--- nothing. Collecting first turns it into the floor: run this twice, minutes
+--- apart, and only a floor that climbed is a leak.
+---
+--- The counts underneath say where any growth is. Both caches hold entries for
+--- a fixed lifetime, so they settle at however many players were seen inside
+--- that window rather than climbing all session.
+function RR:DebugMemory()
+    print("|cff00ccffRaiderRanked|r Memory:")
+
+    collectgarbage("collect")
+    UpdateAddOnMemoryUsage()
+    print(string.format("  %-24s %.0f KB  (after collecting; compare this over time)",
+        "addon total", GetAddOnMemoryUsage("RaiderRanked") or 0))
+
+    local function size(t)
+        local n = 0
+        for _ in pairs(t or {}) do n = n + 1 end
+        return n
+    end
+
+    print(string.format("  %-24s %d entries", "previous season cache", size(self.prevCache)))
+    print(string.format("  %-24s %d entries", "PvP cache", size(self.pvpCache)))
+
+    local chars, points = 0, 0
+    for _, history in pairs((self.db and self.db.charHistory) or {}) do
+        chars = chars + 1
+        points = points + #history
+    end
+    print(string.format("  %-24s %d characters, %d points", "score history", chars, points))
+
+    local archived = 0
+    for _, record in ipairs((self.db and self.db.seasonArchive) or {}) do
+        for _, points_ in pairs(record.charPoints or {}) do
+            archived = archived + #points_
+        end
+    end
+    print(string.format("  %-24s %d seasons, %d points", "archive",
+        #((self.db and self.db.seasonArchive) or {}), archived))
+end
+
 function RR:DebugScore()
     local p = "|cff00ccffRaiderRanked Debug|r"
     print(p)
@@ -492,6 +536,9 @@ function RR:HandleSlashCommand(msg)
     elseif msg == "groupdbg" then
         self:DebugGroupChannel()
 
+    elseif msg == "memdbg" then
+        self:DebugMemory()
+
     elseif msg == "test" then
         self:RunTests()
 
@@ -580,6 +627,7 @@ function RR:HandleSlashCommand(msg)
         print("|cff00ccffRaiderRanked|r Diagnostics:")
         print("  /rr debug              - dump raw score API output")
         print("  /rr groupdbg           - party categories + broadcast channel")
+        print("  /rr memdbg             - memory floor and what is holding it")
         print("  /rr prevdbg [sim]      - last season sources; sim fakes a finished season")
         print("  /rr pvpdebug           - PvP rating per bracket")
         print("  /rr wings debug [unit] - wing anchor, draw order and scale")
