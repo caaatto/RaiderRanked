@@ -334,6 +334,18 @@ local function runSeasonArchiveTests()
     local alpha = rec and rec.chars and rec.chars["Alpha-Realm"]
     local beta  = rec and rec.chars and rec.chars["Beta-Realm"]
 
+    -- The reset can land before the boundary the patcher writes: Blizzard
+    -- squished scores days before Raider.IO moved its season on. Splitting on
+    -- the nominal start alone would file the new season's first runs as the old
+    -- season's closing result and leave the new one empty.
+    s:assert("A halving is a season break", RR:IsSeasonBreak(3420, 165))
+    s:assert("A reset to a single dungeon is a break", RR:IsSeasonBreak(2000, 155))
+    s:assert("A small dip is not a break", not RR:IsSeasonBreak(2500, 2100))
+    s:assert("Exactly half is a break", not RR:IsSeasonBreak(1000, 500))
+    s:assert("A rise is never a break", not RR:IsSeasonBreak(1000, 1200))
+    s:assert("Zero before is not a break", not RR:IsSeasonBreak(0, 0))
+    s:assert("Missing values are not a break", not RR:IsSeasonBreak(nil, 100))
+
     s:eq("Archived record keeps the old season name", rec and rec.name, "Test Season")
     s:eq("Peak comes from the tracked peak, not the points", alpha and alpha.peak, 2600)
     s:eq("Final is the last score of that season", alpha and alpha.final, 2100)

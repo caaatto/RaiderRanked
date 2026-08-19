@@ -454,6 +454,50 @@ local function ScanSeason(history, fromTs, toTs)
 end
 
 --- Builds the per-character rows for a season window.
+--- When the season actually ended for this character.
+---
+--- SEASON_START is the moment Raider.IO puts the new season at, and Blizzard
+--- does not always agree with it. In Midnight the in-game squish landed days
+--- before Raider.IO moved its boundary, so scores had already reset while the
+--- addon still believed the old season was running, and the new season's first
+--- runs were recorded under the old one.
+---
+--- Splitting on SEASON_START alone would then file those runs as the old
+--- season's closing result, burying a real 3400 under a first-day 165, and
+--- start the new season with nothing. Both halves wrong from one bad boundary.
+---
+--- Within a season a score only ever rises, since it is the sum of the best
+--- run per dungeon. A fall between two adjacent points is therefore a season
+--- boundary and cannot be anything else. Where one is found before the
+--- nominal start, it is the truer split; otherwise the nominal one stands.
+--- A drop this steep is a reset and not a correction.
+---
+--- Any fall at all would be tempting to treat as the boundary, since a score
+--- is the sum of the best run per dungeon and cannot decrease on its own. But
+--- the score is read from the game API with Raider.IO as a fallback, and a
+--- stale fallback stepping in for one reading can report slightly less than
+--- the last one. A reset restarts from a single dungeon's worth of points, so
+--- requiring the score to at least halve separates the two without needing to
+--- know anything about either season's scale.
+RR.SEASON_RESET_RATIO = 0.5
+
+function RR:IsSeasonBreak(previous, current)
+    if type(previous) ~= "number" or type(current) ~= "number" then return false end
+    if previous <= 0 then return false end
+    return current < previous * self.SEASON_RESET_RATIO
+end
+
+local function SeasonBoundary(history, seasonStart)
+    if type(history) ~= "table" then return seasonStart end
+    for i = #history, 2, -1 do
+        local previous, current = history[i - 1], history[i]
+        if RR:IsSeasonBreak(previous[2], current[2]) and current[1] < seasonStart then
+            return current[1]
+        end
+    end
+    return seasonStart
+end
+
 local function CollectSeasonChars(fromTs, toTs)
     local chars = {}
     -- Callable before the database is bound (a panel built early, a test
@@ -462,7 +506,7 @@ local function CollectSeasonChars(fromTs, toTs)
     for key, history in pairs(RR.db.charHistory or {}) do
         local peak, final, finalTs, thresholds, peakThresholds,
               bestPct, bestPctAt, bestPctScore, bestPctThresholds, peakAt =
-            ScanSeason(history, fromTs, toTs)
+            ScanSeason(history, fromTs, SeasonBoundary(history, toTs))
 
         -- The tracked peak survives history trimming, so it can be higher than
         -- anything still in the points. When it is, the moment it happened is
@@ -584,14 +628,17 @@ function RR:ArchiveSeasonIfRolled()
     -- matters for the season being played, and this keeps the saved variables
     -- bounded however many seasons pile up.
     for key, history in pairs(db.charHistory or {}) do
+        -- Per character, because the reset reaches each one at the moment it
+        -- is next played, not all at once.
+        local boundary = SeasonBoundary(history, SEASON_START)
         local moved = {}
         for i = 1, #history do
-            if history[i][1] < SEASON_START then
+            if history[i][1] < boundary then
                 table.insert(moved, history[i])
             end
         end
         for i = #history, 1, -1 do
-            if history[i][1] < SEASON_START then
+            if history[i][1] < boundary then
                 table.remove(history, i)
             end
         end

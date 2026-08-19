@@ -110,9 +110,11 @@ local function ClosingScoreFromHistory()
     if not history or #history == 0 then return nil end
 
     for i = #history, 2, -1 do
-        local prev, current = history[i - 1][2], history[i][2]
-        if prev and current and prev > 0 and current < prev then
-            return prev
+        local previous, current = history[i - 1][2], history[i][2]
+        -- Same test the archive splits on, so the closing score found here and
+        -- the one filed there can never disagree.
+        if RR:IsSeasonBreak(previous, current) then
+            return previous
         end
     end
 
