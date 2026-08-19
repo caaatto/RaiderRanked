@@ -26,7 +26,7 @@ RR.CUTOFFS.eu.all = {
     EMERALD     = { minScore = 3466, wingScore = 3547 },
     PLATINUM    = { minScore = 3166, wingScore = 3338 },
     GOLD        = { minScore = 2822, wingScore = 3018 },
-    SILVER      = { minScore = 1719, wingScore = 2519 },
+    SILVER      = { minScore = 1718, wingScore = 2519 },
     BRONZE      = { minScore =  413, wingScore =  1006 },
     IRON        = { minScore =    1, wingScore =  230 },
 }
@@ -40,7 +40,7 @@ RR.CUTOFFS.eu.horde = {
     EMERALD     = { minScore = 3517, wingScore = 3625 },
     PLATINUM    = { minScore = 3171, wingScore = 3314 },
     GOLD        = { minScore = 2822, wingScore = 2967 },
-    SILVER      = { minScore = 1719, wingScore = 2519 },
+    SILVER      = { minScore = 1718, wingScore = 2519 },
     BRONZE      = { minScore =  413, wingScore =  1006 },
     IRON        = { minScore =    1, wingScore =  230 },
 }
@@ -54,7 +54,7 @@ RR.CUTOFFS.eu.alliance = {
     EMERALD     = { minScore = 3579, wingScore = 3704 },
     PLATINUM    = { minScore = 3214, wingScore = 3357 },
     GOLD        = { minScore = 2822, wingScore = 3014 },
-    SILVER      = { minScore = 1719, wingScore = 2519 },
+    SILVER      = { minScore = 1718, wingScore = 2519 },
     BRONZE      = { minScore =  413, wingScore =  1006 },
     IRON        = { minScore =    1, wingScore =  230 },
 }
@@ -70,7 +70,7 @@ RR.CUTOFFS.us.all = {
     GOLD        = { minScore = 2725, wingScore = 2963 },
     SILVER      = { minScore = 1422, wingScore = 2305 },
     BRONZE      = { minScore =  341, wingScore =  822 },
-    IRON        = { minScore =    1, wingScore =  174 },
+    IRON        = { minScore =    1, wingScore =  175 },
 }
 
 RR.CUTOFFS.us.horde = {
@@ -79,12 +79,12 @@ RR.CUTOFFS.us.horde = {
     GRANDMASTER = { minScore = 3982, wingScore = 4007 },
     MASTER      = { minScore = 3809, wingScore = 3896 },
     DIAMOND     = { minScore = 3648, wingScore = 3729 },
-    EMERALD     = { minScore = 3433, wingScore = 3541 },
+    EMERALD     = { minScore = 3433, wingScore = 3540 },
     PLATINUM    = { minScore = 3118, wingScore = 3242 },
     GOLD        = { minScore = 2725, wingScore = 2909 },
     SILVER      = { minScore = 1422, wingScore = 2305 },
     BRONZE      = { minScore =  341, wingScore =  822 },
-    IRON        = { minScore =    1, wingScore =  174 },
+    IRON        = { minScore =    1, wingScore =  175 },
 }
 
 RR.CUTOFFS.us.alliance = {
@@ -98,7 +98,7 @@ RR.CUTOFFS.us.alliance = {
     GOLD        = { minScore = 2725, wingScore = 2946 },
     SILVER      = { minScore = 1422, wingScore = 2305 },
     BRONZE      = { minScore =  341, wingScore =  822 },
-    IRON        = { minScore =    1, wingScore =  174 },
+    IRON        = { minScore =    1, wingScore =  175 },
 }
 
 RR.CUTOFFS.all.all = {
@@ -112,7 +112,7 @@ RR.CUTOFFS.all.all = {
     GOLD        = { minScore = 2781, wingScore = 2995 },
     SILVER      = { minScore = 1594, wingScore = 2429 },
     BRONZE      = { minScore =  383, wingScore =  929 },
-    IRON        = { minScore =    1, wingScore =  206 },
+    IRON        = { minScore =    1, wingScore =  207 },
 }
 
 RR.CUTOFFS.all.horde = {
@@ -121,7 +121,7 @@ RR.CUTOFFS.all.horde = {
     GRANDMASTER = { minScore = 4019, wingScore = 4042 },
     MASTER      = { minScore = 3859, wingScore = 3939 },
     DIAMOND     = { minScore = 3698, wingScore = 3779 },
-    EMERALD     = { minScore = 3483, wingScore = 3591 },
+    EMERALD     = { minScore = 3483, wingScore = 3590 },
     PLATINUM    = { minScore = 3149, wingScore = 3285 },
     GOLD        = { minScore = 2782, wingScore = 2943 },
     SILVER      = { minScore = 1597, wingScore = 2431 },
@@ -138,7 +138,7 @@ RR.CUTOFFS.all.alliance = {
     EMERALD     = { minScore = 3562, wingScore = 3688 },
     PLATINUM    = { minScore = 3193, wingScore = 3338 },
     GOLD        = { minScore = 2780, wingScore = 2985 },
-    SILVER      = { minScore = 1591, wingScore = 2427 },
+    SILVER      = { minScore = 1590, wingScore = 2427 },
     BRONZE      = { minScore =  382, wingScore =  927 },
     IRON        = { minScore =    1, wingScore =  206 },
 }
