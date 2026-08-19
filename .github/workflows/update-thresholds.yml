@@ -34,7 +34,18 @@ jobs:
           RR_STATE_PATH: scripts/state.json
         run: |
           mkdir -p build
-          RR_OUTPUT_DIR=./build python3 scripts/update_thresholds.py
+          # Raider.IO times out often enough to lose a night's run to it, and a
+          # missed run means the cutoffs stand still for a day. Each attempt
+          # starts from scratch, so a partial fetch cannot carry over.
+          for attempt in 1 2 3; do
+            if RR_OUTPUT_DIR=./build python3 scripts/update_thresholds.py; then
+              exit 0
+            fi
+            echo "attempt ${attempt} failed"
+            sleep $((attempt * 30))
+          done
+          echo "::error::could not fetch thresholds after 3 attempts"
+          exit 1
 
       - name: Patch addon Lua files
         run: python3 scripts/patch_addon.py RaiderRanked/RankSystem.lua build/thresholds.json
