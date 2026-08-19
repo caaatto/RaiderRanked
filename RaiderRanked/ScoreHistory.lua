@@ -271,7 +271,7 @@ end
 --- The ladder in force at a moment, newest sample at or before it.
 --- Falls back to the samples older histories carry inline, then to the live
 --- ladder, so data written before the series existed still reads correctly.
-local function ThresholdsAt(ts, history, idx)
+local function ThresholdsAt(ts, history, idx, fallback)
     local series = RR.db and RR.db.cutoffPoints
     if series then
         for i = #series, 1, -1 do
@@ -283,7 +283,21 @@ local function ThresholdsAt(ts, history, idx)
             if history[i][3] then return history[i][3] end
         end
     end
-    return RR.db and RR.db.thresholds or {}
+
+    -- Nothing recorded at or before this moment, which is normal for the very
+    -- first point of a season: the ladder is not sampled until the character is
+    -- next played. The nearest thing in time is the earliest sample there is,
+    -- and it is a far better answer than either the live ladder or the
+    -- season's closing one. Reaching for the close would flatten the cutoff
+    -- movement to zero and report the whole score as progress.
+    if history then
+        for i = 1, #history do
+            if history[i][3] then return history[i][3] end
+        end
+    end
+    if series and series[1] then return series[1][2] end
+
+    return fallback or (RR.db and RR.db.thresholds) or {}
 end
 
 local function CopyThresholds()
@@ -962,12 +976,17 @@ local viewSeasonIndex
 --- series existed has only the inline ones, and a season recorded since has
 --- only the series, so the chart has to read both or it draws nothing for one
 --- of them. Samples at the same second are one event.
-local function ThresholdEvents(history)
+local function ThresholdEvents(set)
     local events, seen = {}, {}
-    for _, entry in ipairs(history or {}) do
-        if entry[3] and not seen[entry[1]] then
-            seen[entry[1]] = true
-            events[#events + 1] = { entry[1], entry[3] }
+    -- Every character, because the ladder is the same for all of them. Each
+    -- one only recorded it on the days it was played, so a single character's
+    -- copies are full of holes that the others fill.
+    for _, history in pairs(set or {}) do
+        for _, entry in ipairs(history) do
+            if entry[3] and not seen[entry[1]] then
+                seen[entry[1]] = true
+                events[#events + 1] = { entry[1], entry[3] }
+            end
         end
     end
     for _, sample in ipairs((RR.db and RR.db.cutoffPoints) or {}) do
@@ -2128,17 +2147,26 @@ function RR:RefreshHistoryGraph()
         local set = self:GetHistorySet()
         local history = key and set[key]
 
+        -- What a point falls back to when no ladder was recorded near it: the
+        -- closing ladder of the season on display, never the live one.
+        local viewed = self:GetViewedSeason()
+        local byRegion = viewed and viewed.endCutoffs
+            and viewed.endCutoffs[self.db.cutoffRegion]
+        local seasonFallback = byRegion and byRegion[self.db.cutoffFaction]
+
         local entries = {}
         if history then
             for i, e in ipairs(history) do
                 if e[1] >= cutoff then
-                    table.insert(entries, { e[1], e[2], ThresholdsAt(e[1], history, i) })
+                    table.insert(entries,
+                        { e[1], e[2], ThresholdsAt(e[1], history, i, seasonFallback) })
                 end
             end
             for i = #history, 1, -1 do
                 if history[i][1] < cutoff then
                     table.insert(entries, 1, {
-                        cutoff, history[i][2], ThresholdsAt(cutoff, history, i)
+                        cutoff, history[i][2],
+                        ThresholdsAt(cutoff, history, i, seasonFallback)
                     })
                     break
                 end
@@ -2199,11 +2227,8 @@ function RR:RefreshHistoryGraph()
         -- the current char's history entries. entry[3] is set only when
         -- thresholds actually changed (see RecordScoreSnapshot), so we get one
         -- point per genuine cutoff movement.
-        local key = CharKey()
         local set = self:GetHistorySet()
-        local history = key and set[key]
-
-        local events = ThresholdEvents(history)
+        local events = ThresholdEvents(set)
 
         -- Range filter + context point before cutoff. The window follows the
         -- season on display: anchored to the running season's start, every
@@ -2234,11 +2259,15 @@ function RR:RefreshHistoryGraph()
                         end
                     end
                     -- Extend to "now" so the latest value reaches the right edge.
-                    if #series >= 1 then
+                    -- Only the running season is carried to the right edge,
+                    -- because its last value is still the one in force. A
+                    -- finished season is drawn to its last actual sample:
+                    -- extending it would assert the cutoffs stopped moving on
+                    -- the day this client last saw them, which they did not.
+                    if #series >= 1 and not ev_latest then
                         local last = series[#series]
-                        local edge = ev_latest or time()
-                        if last[1] < edge then
-                            table.insert(series, { edge, last[2], nil, rank.id })
+                        if last[1] < time() then
+                            table.insert(series, { time(), last[2], nil, rank.id })
                         end
                     end
                     if #series >= 2 then
