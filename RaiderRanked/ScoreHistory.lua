@@ -2179,6 +2179,26 @@ function RR:RefreshHistoryGraph()
     local viewedClosing = viewedByRegion and viewedByRegion[self.db.cutoffFaction]
     if viewedClosing then currentThresholds = viewedClosing end
 
+    --- Where this character finished the season on display, with the rank that
+    --- was worth under its own closing ladder. Both the progress line's colour
+    --- and its label come from this, so they cannot disagree.
+    local function ClosingStanding()
+        if not viewedRecord then return nil end
+        local key = CharKey()
+        local entry = key and viewedRecord.chars and viewedRecord.chars[key]
+        local score = entry and (entry.final or entry.peak)
+        if not score then return nil end
+        local rank = RR.RANK_BY_ID[RankIdFor(score, currentThresholds)]
+        if not rank then return nil end
+        local byRegionWings = viewedRecord.endWings
+            and viewedRecord.endWings[self.db.cutoffRegion]
+        local wings = byRegionWings and byRegionWings[self.db.cutoffFaction]
+        local plus = rank.id ~= "CHALLENGER" and wings and wings[rank.id]
+            and score >= wings[rank.id]
+        return rank, score, plus
+    end
+    local closingRank, closingScore, closingPlus = ClosingStanding()
+
     if isProgressMode then
         -- "Real progression": each point is (score gained) − (next-rank cutoff
         -- movement) since range start. Zero = treading water.
@@ -2236,7 +2256,11 @@ function RR:RefreshHistoryGraph()
             end
             table.insert(charDataSets, {
                 key = key, data = series, isCurrent = true,
-                color = refRank.color, refRank = refRank,
+                -- A finished season is drawn in the colour of the rank it
+                -- ended on, the same one its label names. The running season
+                -- keeps the rank being chased, which is what its delta counts
+                -- towards.
+                color = (closingRank or refRank).color, refRank = refRank,
             })
         end
 
@@ -2566,27 +2590,17 @@ function RR:RefreshHistoryGraph()
         lbl:ClearAllPoints()
         lbl:SetPoint("LEFT", plotArea, "BOTTOMRIGHT", 4, yy)
 
-        if viewedRecord then
-            -- A finished season has a result, not a running delta. What it is
+        if closingRank then
+            -- A finished season has a result, not a running delta. What is
             -- worth knowing is where it ended, judged by its own closing
             -- ladder, and a delta against a rank the character was only
             -- chasing on the last day says nothing about the months before it.
-            local key = CharKey()
-            local entry = key and viewedRecord.chars and viewedRecord.chars[key]
-            local score = entry and (entry.final or entry.peak)
-            local rank = score and RR.RANK_BY_ID[RankIdFor(score, currentThresholds)]
-            if rank then
-                local byRegionWings = viewedRecord.endWings
-                    and viewedRecord.endWings[self.db.cutoffRegion]
-                local wings = byRegionWings and byRegionWings[self.db.cutoffFaction]
-                local plus = rank.id ~= "CHALLENGER" and wings and wings[rank.id]
-                    and score >= wings[rank.id]
-                local c = rank.color
-                lbl:SetText(string.format("|cff%02x%02x%02x%s%s|r |cffaaaaaa%d|r",
-                    math.floor(c.r*255), math.floor(c.g*255), math.floor(c.b*255),
-                    RANK_SHORT[rank.id] or rank.name, plus and " +" or "", score))
-                lbl:SetJustifyH("LEFT")
-            end
+            local c = closingRank.color
+            lbl:SetText(string.format("|cff%02x%02x%02x%s%s|r |cffaaaaaa%d|r",
+                math.floor(c.r*255), math.floor(c.g*255), math.floor(c.b*255),
+                RANK_SHORT[closingRank.id] or closingRank.name,
+                closingPlus and " +" or "", closingScore))
+            lbl:SetJustifyH("LEFT")
         else
             local c = cds.color
             local val = math.floor(last[2] + 0.5)
