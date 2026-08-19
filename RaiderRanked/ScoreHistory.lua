@@ -949,6 +949,9 @@ local viewSeasonIndex
 
 --- The per-character point tables the graph should draw right now.
 function RR:GetHistorySet()
+    -- Callable before the database is bound, the same way the seasons view is;
+    -- an empty set is the honest answer rather than an error.
+    if not self.db then return {} end
     if viewSeasonIndex then
         local record = self.db.seasonArchive and self.db.seasonArchive[viewSeasonIndex]
         if record then return record.charPoints or {} end
