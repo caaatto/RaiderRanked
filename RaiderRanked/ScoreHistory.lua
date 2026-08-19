@@ -169,6 +169,7 @@ function RR:InitScoreHistory()
     -- also prunes the points it archived, so the cleanup below can drop any
     -- character that had nothing but last season's data.
     self:ArchiveSeasonIfRolled()
+    self:RepairArchivedCutoffs(self.db)
 
     -- One-off repair for saves written before zero scores were skipped: drop
     -- any 0 recorded *after* a real score. Those are season-end readings, and
@@ -591,6 +592,33 @@ local function EarliestPoint(db)
     return earliest
 end
 
+--- The closing ladders for a named season, if the shipped previous-season set
+--- is the one that belongs to it. Matched by name so a client updating several
+--- seasons late cannot staple the wrong ladders onto an old record.
+local function ClosingCutoffsFor(name)
+    if not name or not RR.PREV_SEASON_NAME then return nil end
+    if RR:SeasonDisplayName(name) ~= RR:SeasonDisplayName(RR.PREV_SEASON_NAME) then
+        return nil
+    end
+    return RR:AllPrevCutoffThresholds(), RR:AllPrevCutoffThresholds(true)
+end
+
+--- Puts the closing ladders back on a record that froze the wrong ones.
+---
+--- A season archived before this was understood kept whatever the live cutoffs
+--- were at that moment, which is the new season's ladder. Rewritten in place
+--- and only where the shipped set names the same season, so it is both safe to
+--- repeat and unable to touch a record it does not belong to.
+function RR:RepairArchivedCutoffs(db)
+    for _, record in ipairs((db and db.seasonArchive) or {}) do
+        local mins, wings = ClosingCutoffsFor(record.name)
+        if mins then
+            record.endCutoffs = mins
+            record.endWings   = wings
+        end
+    end
+end
+
 --- Files the previous season away and clears its data, if SEASON_START moved.
 --- Called from InitScoreHistory, i.e. once per login before anything reads the
 --- history.
@@ -621,6 +649,8 @@ function RR:ArchiveSeasonIfRolled()
         return
     end
 
+    local closingCutoffs, closingWings = ClosingCutoffsFor(db.seasonName)
+
     -- The record is created unconditionally: even a season nobody scored in
     -- still owns whatever points exist, and they have to go somewhere before
     -- the history is cleared below.
@@ -634,10 +664,14 @@ function RR:ArchiveSeasonIfRolled()
         -- written once, and the only way a finished season stays comparable:
         -- the live cutoffs now describe the new season, where everyone is at
         -- zero again.
-        endCutoffs = RR:AllCutoffThresholds(),
+        -- Taken from the shipped previous-season set where it names the season
+        -- being filed, since the live cutoffs have already moved on by now.
+        -- The live ones remain the fallback for a client that never received
+        -- the rotated data.
+        endCutoffs = closingCutoffs or RR:AllCutoffThresholds(),
         -- Separately, so a closing rank can still be shown with its "+" suffix
         -- rather than looking like a coarser kind of value than the live one.
-        endWings   = RR:AllCutoffThresholds(true),
+        endWings   = closingWings or RR:AllCutoffThresholds(true),
     }
 
     -- Points move into the record rather than being deleted, so a past season
@@ -815,6 +849,29 @@ function RR:AllCutoffThresholds(wings)
             out[region][faction] = wings
                 and self:CutoffWingScores(region, faction)
                 or  self:CutoffThresholds(region, faction)
+        end
+    end
+    return out
+end
+
+--- The nine ladders of the season that has just ended, from the shipped set.
+---
+--- Needed because AllCutoffThresholds reads the live ones, and by the time a
+--- season is archived those already describe the new season: the patcher moves
+--- the cutoffs and the season name in the same commit, and the addon only gets
+--- to notice at the next login. Freezing the live set would record the new
+--- season's ladder as the old season's closing one, which reads a Platinum
+--- finish as Challenger, since a fresh season's cutoffs sit far lower.
+---@return table|nil
+function RR:AllPrevCutoffThresholds(wings)
+    if not self.PREV_CUTOFFS then return nil end
+    local out = {}
+    for _, region in ipairs(self.CUTOFF_REGIONS) do
+        out[region] = {}
+        for _, faction in ipairs(self.CUTOFF_FACTIONS) do
+            local mins, wingScores = self:PrevCutoffThresholds(region, faction)
+            if not mins then return nil end
+            out[region][faction] = wings and wingScores or mins
         end
     end
     return out
