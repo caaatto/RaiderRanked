@@ -433,10 +433,19 @@ local function runSeasonArchiveTests()
         charHistory = {}, charPeak = {},
         cutoffRegion = "eu", cutoffFaction = "all",
     }
-    RR:RecordBestRank("Live-Realm", 3000)
+    -- Scores derived from the live ladder, never written out. Cutoffs are
+    -- repatched daily and fall by a third or more at a season boundary, so
+    -- fixed numbers drift into the same rank and the comparisons below stop
+    -- comparing anything: two scores in the top band both read as 0.1%.
+    local ladder = RR:CutoffThresholds("eu", "all") or {}
+    local worse  = math.floor((ladder.GOLD or 1200))
+    local good   = math.floor((ladder.DIAMOND or 2500))
+    local better = math.floor((ladder.CHALLENGER or 3000))
+
+    RR:RecordBestRank("Live-Realm", good)
     local own = RR:GetOwnBest("Live-Realm")
     s:assert("A best rank is recorded for the configured ladder", own ~= nil)
-    s:eq("It keeps the score", own and own.score, 3000)
+    s:eq("It keeps the score", own and own.score, good)
     s:assert("It timestamps the moment", type(own and own.ts) == "number")
 
     local ladderCount = 0
@@ -447,10 +456,10 @@ local function runSeasonArchiveTests()
 
     -- Each ladder keeps its own best, and a worse result never overwrites one.
     local before = own.pct
-    RR:RecordBestRank("Live-Realm", 1000)
-    s:eq("A worse score leaves the best alone", RR:GetOwnBest("Live-Realm").score, 3000)
-    RR:RecordBestRank("Live-Realm", 4000)
-    s:eq("A better score replaces it", RR:GetOwnBest("Live-Realm").score, 4000)
+    RR:RecordBestRank("Live-Realm", worse)
+    s:eq("A worse score leaves the best alone", RR:GetOwnBest("Live-Realm").score, good)
+    RR:RecordBestRank("Live-Realm", better)
+    s:eq("A better score replaces it", RR:GetOwnBest("Live-Realm").score, better)
     s:assert("Percentile improved with it", RR:GetOwnBest("Live-Realm").pct < before)
 
     -- Everything below is what another player's client looks like, not this
