@@ -46,7 +46,7 @@ RR.RANKS = {
     {
         id        = "CHALLENGER",
         name      = "Challenger",
-        minScore  = 2773,
+        minScore  = 2774,
         wingScore = 2852,   -- always winged
         -- Wings use a gold→ice-blue gradient (see UI.lua ApplyWingsColor).
         -- This color is used for text, glow, and HUD elements.
@@ -61,7 +61,7 @@ RR.RANKS = {
     {
         id        = "GRANDMASTER",
         name      = "Grandmaster",
-        minScore  = 2720,
+        minScore  = 2721,
         wingScore = 2744,
         color     = { r = 1.000, g = 0.180, b = 0.180 },
         icon      = MEDIA .. "Ranks\\grandmaster.png",
@@ -75,7 +75,7 @@ RR.RANKS = {
         id        = "MASTER",
         name      = "Master",
         minScore  = 2674,
-        wingScore = 2689,
+        wingScore = 2690,
         color     = { r = 0.720, g = 0.220, b = 1.000 },
         icon      = MEDIA .. "Ranks\\master.png",
         emblem    = MEDIA .. "Emblems\\emblem-master.png",
@@ -87,7 +87,7 @@ RR.RANKS = {
     {
         id        = "DIAMOND",
         name      = "Diamond",
-        minScore  = 2590,
+        minScore  = 2592,
         wingScore = 2637,
         color     = { r = 0.120, g = 0.420, b = 1.000 },
         icon      = MEDIA .. "Ranks\\diamond.png",
@@ -100,8 +100,8 @@ RR.RANKS = {
     {
         id        = "EMERALD",
         name      = "Emerald",
-        minScore  = 2320,
-        wingScore = 2456,
+        minScore  = 2324,
+        wingScore = 2464,
         color     = { r = 0.040, g = 0.880, b = 0.420 },
         icon      = MEDIA .. "Ranks\\emerald.png",
         emblem    = MEDIA .. "Emblems\\emblem-emerald.png",
@@ -113,8 +113,8 @@ RR.RANKS = {
     {
         id        = "PLATINUM",
         name      = "Platinum",
-        minScore  = 1854,
-        wingScore = 2086,
+        minScore  = 1861,
+        wingScore = 2095,
         color     = { r = 0.000, g = 0.580, b = 0.720 },
         icon      = MEDIA .. "Ranks\\platinum.png",
         emblem    = MEDIA .. "Emblems\\emblem-platinum.png",
@@ -127,7 +127,7 @@ RR.RANKS = {
         id        = "GOLD",
         name      = "Gold",
         minScore  = 1240,
-        wingScore = 1469,
+        wingScore = 1472,
         color     = { r = 1.000, g = 0.780, b = 0.000 },
         icon      = MEDIA .. "Ranks\\gold.png",
         emblem    = MEDIA .. "Emblems\\emblem-gold.png",
