@@ -2562,16 +2562,40 @@ function RR:RefreshHistoryGraph()
         local cds = charDataSets[1]
         local last = cds.data[#cds.data]
         local yy = MapY(last[2])
-        local c = cds.color
-        local val = math.floor(last[2] + 0.5)
-        local col = val >= 0 and "66cc66" or "cc6666"
         local lbl = AcquireLabel(labelPool, self.historyFrame.panes.history)
         lbl:ClearAllPoints()
         lbl:SetPoint("LEFT", plotArea, "BOTTOMRIGHT", 4, yy)
-        lbl:SetText(string.format("|cff%02x%02x%02x%s|r |cff%s%+d|r",
-            math.floor(c.r*255), math.floor(c.g*255), math.floor(c.b*255),
-            RANK_SHORT[cds.refRank.id] or cds.refRank.name, col, val))
-        lbl:SetJustifyH("LEFT")
+
+        if viewedRecord then
+            -- A finished season has a result, not a running delta. What it is
+            -- worth knowing is where it ended, judged by its own closing
+            -- ladder, and a delta against a rank the character was only
+            -- chasing on the last day says nothing about the months before it.
+            local key = CharKey()
+            local entry = key and viewedRecord.chars and viewedRecord.chars[key]
+            local score = entry and (entry.final or entry.peak)
+            local rank = score and RR.RANK_BY_ID[RankIdFor(score, currentThresholds)]
+            if rank then
+                local byRegionWings = viewedRecord.endWings
+                    and viewedRecord.endWings[self.db.cutoffRegion]
+                local wings = byRegionWings and byRegionWings[self.db.cutoffFaction]
+                local plus = rank.id ~= "CHALLENGER" and wings and wings[rank.id]
+                    and score >= wings[rank.id]
+                local c = rank.color
+                lbl:SetText(string.format("|cff%02x%02x%02x%s%s|r |cffaaaaaa%d|r",
+                    math.floor(c.r*255), math.floor(c.g*255), math.floor(c.b*255),
+                    RANK_SHORT[rank.id] or rank.name, plus and " +" or "", score))
+                lbl:SetJustifyH("LEFT")
+            end
+        else
+            local c = cds.color
+            local val = math.floor(last[2] + 0.5)
+            local col = val >= 0 and "66cc66" or "cc6666"
+            lbl:SetText(string.format("|cff%02x%02x%02x%s|r |cff%s%+d|r",
+                math.floor(c.r*255), math.floor(c.g*255), math.floor(c.b*255),
+                RANK_SHORT[cds.refRank.id] or cds.refRank.name, col, val))
+            lbl:SetJustifyH("LEFT")
+        end
     end
 
     -- ── Current score indicator (score mode only) ──────────────────────────
