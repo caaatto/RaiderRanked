@@ -51,12 +51,12 @@ local ALT_COLORS = {
     { r = 1.00, g = 0.35, b = 0.35 },  -- red
 }
 
--- MN Season 1 • Full start: 25 March 2026, 04:00 UTC (EU reset).
-local SEASON_START = time({ year = 2026, month = 3, day = 25, hour = 4, min = 0, sec = 0 })
+-- MN Season 2 start: 19 August 2026, 04:00 UTC (EU reset).
+local SEASON_START = time({ year = 2026, month = 8, day = 19, hour = 4, min = 0, sec = 0 })
 -- Label for the season above. Patched alongside SEASON_START by
 -- scripts/patch_addon.py; only ever used for display, so a stale value
 -- costs a wrong caption and nothing else.
-local SEASON_NAME = "MN Season 1 • Full"
+local SEASON_NAME = "MN Season 2"
 
 -- ── Helpers ─────────────────────────────────────────────────────────────────
 
