@@ -2163,7 +2163,10 @@ function RR:RefreshHistoryGraph()
         return
     end
 
-    -- Get current thresholds for rank bands.
+    -- The ladder the rank bands are drawn from. For a finished season this has
+    -- to be that season's own: drawing a past curve against the running
+    -- season's cutoffs puts a Platinum finish of 3420 far above a Challenger
+    -- line that only asks 2753, which reads as a rank the character never had.
     local currentThresholds = self.db.thresholds or {}
 
     -- The closing ladder of the season on display, where one is archived. It
@@ -2174,6 +2177,7 @@ function RR:RefreshHistoryGraph()
     local viewedByRegion = viewedRecord and viewedRecord.endCutoffs
         and viewedRecord.endCutoffs[self.db.cutoffRegion]
     local viewedClosing = viewedByRegion and viewedByRegion[self.db.cutoffFaction]
+    if viewedClosing then currentThresholds = viewedClosing end
 
     if isProgressMode then
         -- "Real progression": each point is (score gained) − (next-rank cutoff
