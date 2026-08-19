@@ -487,11 +487,28 @@ function RR:IsSeasonBreak(previous, current)
     return current < previous * self.SEASON_RESET_RATIO
 end
 
+-- How far from the nominal start a reset is still taken to be that season's.
+--
+-- Season boundaries differ by region and the addon can only carry one date.
+-- In Midnight, North America reset thirteen hours before Europe and Korea
+-- nineteen hours after it, so on either side of the embedded date there are
+-- players whose season had already turned over and players whose had not.
+-- A drop is therefore accepted as the boundary wherever it falls near the
+-- nominal one, before it or after it.
+--
+-- The window is what keeps that honest. Outside it the nominal date stands,
+-- so a player returning from a month away does not have their first evening
+-- back read as a season boundary.
+local SEASON_BOUNDARY_WINDOW = 3 * 24 * 60 * 60
+
 local function SeasonBoundary(history, seasonStart)
     if type(history) ~= "table" then return seasonStart end
+    local earliest = seasonStart - SEASON_BOUNDARY_WINDOW
+    local latest   = seasonStart + SEASON_BOUNDARY_WINDOW
     for i = #history, 2, -1 do
         local previous, current = history[i - 1], history[i]
-        if RR:IsSeasonBreak(previous[2], current[2]) and current[1] < seasonStart then
+        if RR:IsSeasonBreak(previous[2], current[2])
+           and current[1] >= earliest and current[1] <= latest then
             return current[1]
         end
     end
