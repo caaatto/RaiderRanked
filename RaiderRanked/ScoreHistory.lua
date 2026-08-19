@@ -2140,6 +2140,15 @@ function RR:RefreshHistoryGraph()
     -- Get current thresholds for rank bands.
     local currentThresholds = self.db.thresholds or {}
 
+    -- The closing ladder of the season on display, where one is archived. It
+    -- is the last thing known to have been true that season, and this client
+    -- may well never have sampled it: the ladder is only written down on the
+    -- days a character is played.
+    local viewedRecord = self:GetViewedSeason()
+    local viewedByRegion = viewedRecord and viewedRecord.endCutoffs
+        and viewedRecord.endCutoffs[self.db.cutoffRegion]
+    local viewedClosing = viewedByRegion and viewedByRegion[self.db.cutoffFaction]
+
     if isProgressMode then
         -- "Real progression": each point is (score gained) − (next-rank cutoff
         -- movement) since range start. Zero = treading water.
@@ -2149,10 +2158,7 @@ function RR:RefreshHistoryGraph()
 
         -- What a point falls back to when no ladder was recorded near it: the
         -- closing ladder of the season on display, never the live one.
-        local viewed = self:GetViewedSeason()
-        local byRegion = viewed and viewed.endCutoffs
-            and viewed.endCutoffs[self.db.cutoffRegion]
-        local seasonFallback = byRegion and byRegion[self.db.cutoffFaction]
+        local seasonFallback = viewedClosing
 
         local entries = {}
         if history then
@@ -2259,6 +2265,18 @@ function RR:RefreshHistoryGraph()
                         end
                     end
                     -- Extend to "now" so the latest value reaches the right edge.
+                    -- Where the season closed, as its own point. Real data
+                    -- rather than a flat extension, and usually the season's
+                    -- highest value, since cutoffs climb: without it the chart
+                    -- stops wherever this client last happened to look.
+                    if ev_latest and viewedClosing and viewedClosing[rank.id] then
+                        local last = series[#series]
+                        if not last or last[1] < ev_latest then
+                            series[#series + 1] =
+                                { ev_latest, viewedClosing[rank.id], nil, rank.id }
+                        end
+                    end
+
                     -- Only the running season is carried to the right edge,
                     -- because its last value is still the one in force. A
                     -- finished season is drawn to its last actual sample:
@@ -2469,8 +2487,17 @@ function RR:RefreshHistoryGraph()
     -- Right-side legend for cutoffs mode: show the latest cutoff value per rank.
     if isCutoffsMode then
         for _, cds in ipairs(charDataSets) do
-            local last = cds.data[#cds.data]
-            local yy = MapY(last[2])
+            -- A finished season is labelled with the highest its cutoff ever
+            -- reached, which is what that season demanded of anyone chasing
+            -- the rank. The running season is labelled with the value in
+            -- force, because that is the one still being chased.
+            local value, at = cds.data[#cds.data][2], cds.data[#cds.data]
+            if viewedRecord then
+                for _, point in ipairs(cds.data) do
+                    if point[2] > value then value, at = point[2], point end
+                end
+            end
+            local yy = MapY(at[2])
             local c = cds.color
             local lbl = AcquireLabel(labelPool, self.historyFrame.panes.history)
             lbl:ClearAllPoints()
@@ -2478,7 +2505,7 @@ function RR:RefreshHistoryGraph()
             local short = RANK_SHORT[cds.key] or cds.key
             lbl:SetText(string.format("|cff%02x%02x%02x%s|r |cff777777%d|r",
                 math.floor(c.r*255), math.floor(c.g*255), math.floor(c.b*255),
-                short, last[2]))
+                short, value))
             lbl:SetJustifyH("LEFT")
         end
     end
