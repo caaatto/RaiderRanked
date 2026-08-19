@@ -390,6 +390,14 @@ local function RankIdFor(score, thresholds)
     return bestId or "UNRANKED"
 end
 
+--- The rank table for a score under a given ladder, rather than the live one.
+--- RankIdFor already answers this by id; the graph needs the table itself for
+--- its colour and its neighbour.
+local function RankFromThresholds(score, thresholds)
+    if not thresholds then return nil end
+    return RR.RANK_BY_ID[RankIdFor(score, thresholds)]
+end
+
 --- Approximate percentile for a score, under a given threshold set.
 ---
 --- Each rank owns a fixed percentile band (RR.RANK_PERCENTILES), and the score
@@ -946,6 +954,31 @@ end
 --- Index into db.seasonArchive currently being viewed, or nil for the running
 --- season. Not persisted: reopening the window should show the live season.
 local viewSeasonIndex
+
+--- Every ladder change the addon has a record of, oldest first.
+---
+--- Two sources, because both exist in the wild: the account-wide series, and
+--- the copies older histories carry inline. A season archived before the
+--- series existed has only the inline ones, and a season recorded since has
+--- only the series, so the chart has to read both or it draws nothing for one
+--- of them. Samples at the same second are one event.
+local function ThresholdEvents(history)
+    local events, seen = {}, {}
+    for _, entry in ipairs(history or {}) do
+        if entry[3] and not seen[entry[1]] then
+            seen[entry[1]] = true
+            events[#events + 1] = { entry[1], entry[3] }
+        end
+    end
+    for _, sample in ipairs((RR.db and RR.db.cutoffPoints) or {}) do
+        if not seen[sample[1]] then
+            seen[sample[1]] = true
+            events[#events + 1] = { sample[1], sample[2] }
+        end
+    end
+    table.sort(events, function(a, b) return a[1] < b[1] end)
+    return events
+end
 
 --- The per-character point tables the graph should draw right now.
 function RR:GetHistorySet()
@@ -2115,7 +2148,12 @@ function RR:RefreshHistoryGraph()
         local refRank
         if #entries >= 1 then
             local last = entries[#entries]
-            local curRank = self:GetRankForScore(last[2])
+            -- Judged by the ladder that belongs to the season on display. The
+            -- live one describes the season being played now, and against a
+            -- fresh season's cutoffs a finished season's score reads several
+            -- ranks too high: a Platinum finish came out as Challenger.
+            local curRank = RankFromThresholds(last[2], last[3])
+                or self:GetRankForScore(last[2])
             refRank = self:GetNextRank(curRank) or curRank
         end
 
@@ -2165,17 +2203,12 @@ function RR:RefreshHistoryGraph()
         local set = self:GetHistorySet()
         local history = key and set[key]
 
-        local events = {}
-        if history then
-            for _, entry in ipairs(history) do
-                if entry[3] then
-                    table.insert(events, { entry[1], entry[3] })
-                end
-            end
-        end
+        local events = ThresholdEvents(history)
 
-        -- Range filter + context point before cutoff.
-        local ev_cutoff = rangeDays > 0 and (time() - rangeDays * 86400) or SEASON_START
+        -- Range filter + context point before cutoff. The window follows the
+        -- season on display: anchored to the running season's start, every
+        -- sample of a finished one fell before it and the chart came up empty.
+        local ev_cutoff, ev_latest = self:HistoryWindow(rangeDays)
         local filtered = {}
         local lastBefore
         for _, ev in ipairs(events) do
@@ -2203,8 +2236,9 @@ function RR:RefreshHistoryGraph()
                     -- Extend to "now" so the latest value reaches the right edge.
                     if #series >= 1 then
                         local last = series[#series]
-                        if last[1] < time() then
-                            table.insert(series, { time(), last[2], nil, rank.id })
+                        local edge = ev_latest or time()
+                        if last[1] < edge then
+                            table.insert(series, { edge, last[2], nil, rank.id })
                         end
                     end
                     if #series >= 2 then
