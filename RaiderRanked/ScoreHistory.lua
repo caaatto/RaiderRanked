@@ -171,6 +171,12 @@ function RR:InitScoreHistory()
     self:ArchiveSeasonIfRolled()
     self:RepairArchivedCutoffs(self.db)
 
+    -- Put the ladder on record at login rather than waiting for the first
+    -- score reading. It costs one comparison when nothing changed, and it
+    -- means the cutoff chart has something to draw from the moment a season
+    -- opens instead of staying blank until the first key is timed.
+    self:RecordThresholdSample()
+
     -- One-off repair for saves written before zero scores were skipped: drop
     -- any 0 recorded *after* a real score. Those are season-end readings, and
     -- left in place they draw a cliff to the floor. The leading anchor entry
@@ -256,8 +262,17 @@ end
 --- against a ladder that is months out of date.
 local CUTOFF_POINTS = 800   -- roughly two years of daily samples
 
-local function RecordThresholdSample(db, thresholds)
-    if not thresholds or not next(thresholds) then return end
+function RR:RecordThresholdSample(thresholds)
+    local db = self.db
+    if not db then return end
+    -- Copied here rather than through CopyThresholds, which is defined further
+    -- down the file and would be nil at the moment this runs.
+    if not thresholds then
+        if not db.thresholds then return end
+        thresholds = {}
+        for id, value in pairs(db.thresholds) do thresholds[id] = value end
+    end
+    if not next(thresholds) then return end
     db.cutoffPoints = db.cutoffPoints or {}
     local series = db.cutoffPoints
     local last = series[#series]
@@ -271,14 +286,24 @@ end
 --- The ladder in force at a moment, newest sample at or before it.
 --- Falls back to the samples older histories carry inline, then to the live
 --- ladder, so data written before the series existed still reads correctly.
-local function ThresholdsAt(ts, history, idx, fallback)
+--- @param skipInline boolean  ignore the copies embedded in the history
+local function ThresholdsAt(ts, history, idx, fallback, skipInline)
     local series = RR.db and RR.db.cutoffPoints
     if series then
         for i = #series, 1, -1 do
             if series[i][1] <= ts then return series[i][2] end
         end
     end
-    if history and idx then
+    -- Callers drawing the running season pass skipInline, because a client
+    -- records whatever ladder it currently holds, and for the first hours of a
+    -- season that is still the previous one: the addon files are replaced some
+    -- time after the reset, so a season's opening points carry the closing
+    -- ladder of the season before it. Reading those back makes the cutoffs
+    -- appear to collapse, and the progress line credits the drop as ground
+    -- gained. A finished season's copies are genuine and are the only record
+    -- of it, so they are read as before.
+    local useInline = not skipInline
+    if useInline and history and idx then
         for i = idx, 1, -1 do
             if history[i][3] then return history[i][3] end
         end
@@ -290,7 +315,7 @@ local function ThresholdsAt(ts, history, idx, fallback)
     -- and it is a far better answer than either the live ladder or the
     -- season's closing one. Reaching for the close would flatten the cutoff
     -- movement to zero and report the whole score as progress.
-    if history then
+    if useInline and history then
         for i = 1, #history do
             if history[i][3] then return history[i][3] end
         end
@@ -355,7 +380,7 @@ function RR:RecordScoreSnapshot()
 
     -- The ladder is tracked in its own series, once for the account rather than
     -- once per character, and it moves on its own schedule.
-    RecordThresholdSample(self.db, currentThresholds)
+    self:RecordThresholdSample(currentThresholds)
 
     -- A history point marks a change in what the character achieved. The
     -- cutoffs moving is not that: it used to force a point on every character
@@ -976,8 +1001,9 @@ local viewSeasonIndex
 --- series existed has only the inline ones, and a season recorded since has
 --- only the series, so the chart has to read both or it draws nothing for one
 --- of them. Samples at the same second are one event.
-local function ThresholdEvents(set)
+local function ThresholdEvents(set, skipInline)
     local events, seen = {}, {}
+    if skipInline then set = nil end
     -- Every character, because the ladder is the same for all of them. Each
     -- one only recorded it on the days it was played, so a single character's
     -- copies are full of holes that the others fill.
@@ -2159,20 +2185,23 @@ function RR:RefreshHistoryGraph()
         -- What a point falls back to when no ladder was recorded near it: the
         -- closing ladder of the season on display, never the live one.
         local seasonFallback = viewedClosing
+        -- Only a finished season's embedded copies are trustworthy.
+        local skipInline = viewedRecord == nil
 
         local entries = {}
         if history then
             for i, e in ipairs(history) do
                 if e[1] >= cutoff then
                     table.insert(entries,
-                        { e[1], e[2], ThresholdsAt(e[1], history, i, seasonFallback) })
+                        { e[1], e[2],
+                          ThresholdsAt(e[1], history, i, seasonFallback, skipInline) })
                 end
             end
             for i = #history, 1, -1 do
                 if history[i][1] < cutoff then
                     table.insert(entries, 1, {
                         cutoff, history[i][2],
-                        ThresholdsAt(cutoff, history, i, seasonFallback)
+                        ThresholdsAt(cutoff, history, i, seasonFallback, skipInline)
                     })
                     break
                 end
@@ -2234,7 +2263,7 @@ function RR:RefreshHistoryGraph()
         -- thresholds actually changed (see RecordScoreSnapshot), so we get one
         -- point per genuine cutoff movement.
         local set = self:GetHistorySet()
-        local events = ThresholdEvents(set)
+        local events = ThresholdEvents(set, viewedRecord == nil)
 
         -- Range filter + context point before cutoff. The window follows the
         -- season on display: anchored to the running season's start, every
@@ -2243,7 +2272,13 @@ function RR:RefreshHistoryGraph()
         local filtered = {}
         local lastBefore
         for _, ev in ipairs(events) do
-            if ev[1] >= ev_cutoff then
+            -- Bounded at both ends. Without an upper edge a sample taken
+            -- during the season that came after leaks into a finished one,
+            -- where it reads as a collapse and displaces that season's own
+            -- closing value.
+            if ev_latest and ev[1] > ev_latest then
+                -- belongs to a later season
+            elseif ev[1] >= ev_cutoff then
                 table.insert(filtered, ev)
             else
                 lastBefore = ev
@@ -2251,6 +2286,14 @@ function RR:RefreshHistoryGraph()
         end
         if lastBefore then
             table.insert(filtered, 1, { ev_cutoff, lastBefore[2] })
+        elseif #filtered == 1 and not ev_latest then
+            -- One sample and nothing before it, which is where the running
+            -- season starts out: the ladder is written down the first time a
+            -- character is played and not before. Anchoring that one reading
+            -- at the season's start draws it flat back to the beginning, which
+            -- is an assumption, but a smaller one than showing nothing at all
+            -- for the first days of every season.
+            table.insert(filtered, 1, { ev_cutoff, filtered[1][2] })
         end
 
         charDataSets = {}
