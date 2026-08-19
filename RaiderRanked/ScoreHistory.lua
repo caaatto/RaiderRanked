@@ -243,6 +243,49 @@ local function ThresholdsEqual(a, b)
     return true
 end
 
+--- Thresholds are global: every character sees the same ladder, so keeping a
+--- copy inside each one's history stored the same numbers nine times over and,
+--- worse, forced a history point for every character on every day the cutoffs
+--- moved. That is the point that appeared on each login without the score
+--- having changed.
+---
+--- They live in one account-wide series now, timestamped, so a score point is
+--- written only when a score actually changes while the ladder is still
+--- tracked to the day. Without that tracking a character who stops playing in
+--- April keeps April's cutoffs, and the season's closing rank is computed
+--- against a ladder that is months out of date.
+local CUTOFF_POINTS = 800   -- roughly two years of daily samples
+
+local function RecordThresholdSample(db, thresholds)
+    if not thresholds or not next(thresholds) then return end
+    db.cutoffPoints = db.cutoffPoints or {}
+    local series = db.cutoffPoints
+    local last = series[#series]
+    if last and ThresholdsEqual(last[2], thresholds) then return end
+    series[#series + 1] = { time(), thresholds }
+    while #series > CUTOFF_POINTS do
+        table.remove(series, 1)
+    end
+end
+
+--- The ladder in force at a moment, newest sample at or before it.
+--- Falls back to the samples older histories carry inline, then to the live
+--- ladder, so data written before the series existed still reads correctly.
+local function ThresholdsAt(ts, history, idx)
+    local series = RR.db and RR.db.cutoffPoints
+    if series then
+        for i = #series, 1, -1 do
+            if series[i][1] <= ts then return series[i][2] end
+        end
+    end
+    if history and idx then
+        for i = idx, 1, -1 do
+            if history[i][3] then return history[i][3] end
+        end
+    end
+    return RR.db and RR.db.thresholds or {}
+end
+
 local function CopyThresholds()
     if not RR.db or not RR.db.thresholds then return nil end
     local t = {}
@@ -296,27 +339,20 @@ function RR:RecordScoreSnapshot()
     local now = time()
     local currentThresholds = CopyThresholds()
 
-    -- Find the last stored thresholds (walk backward for delta compression).
-    local lastThresholds
-    for i = #history, 1, -1 do
-        if history[i][3] then
-            lastThresholds = history[i][3]
-            break
-        end
-    end
-    local thresholdsChanged = not ThresholdsEqual(currentThresholds, lastThresholds)
+    -- The ladder is tracked in its own series, once for the account rather than
+    -- once per character, and it moves on its own schedule.
+    RecordThresholdSample(self.db, currentThresholds)
 
-    -- Only record when score or thresholds actually changed.
+    -- A history point marks a change in what the character achieved. The
+    -- cutoffs moving is not that: it used to force a point on every character
+    -- on every day the daily job ran, which looked like a point per login and
+    -- said nothing about the player.
     local last = history[#history]
-    if last and last[2] == score and not thresholdsChanged then
+    if last and last[2] == score then
         return
     end
 
-    local entry = { now, score }
-    if thresholdsChanged or #history == 0 then
-        entry[3] = currentThresholds
-    end
-    table.insert(history, entry)
+    table.insert(history, { now, score })
 
     -- Trim to max.
     while #history > MAX_ENTRIES do
@@ -420,9 +456,12 @@ local function ScanSeason(history, fromTs, toTs)
     for i, e in ipairs(history) do
         local ts, score = e[1], e[2]
         if ts < toTs then
-            -- Thresholds are stored sparsely, only when they changed, so this
-            -- carries the newest set seen so far as the walk moves forward.
-            if e[3] then thresholds = e[3] end
+            -- The ladder in force at this point. Older histories carry it
+            -- inline, newer ones read it from the account-wide series, and
+            -- either way it is the set that was live at that moment: judging
+            -- an April result by August cutoffs understates it by several
+            -- ranks.
+            thresholds = ThresholdsAt(ts, history, i) or thresholds
 
             if ts >= fromTs and score and score > 0 then
                 if not peak or score > peak then
@@ -522,9 +561,18 @@ local function CollectSeasonChars(fromTs, toTs)
     -- harness); an empty result is the honest answer, not an error.
     if not RR.db then return chars end
     for key, history in pairs(RR.db.charHistory or {}) do
+        local boundary = SeasonBoundary(history, toTs)
         local peak, final, finalTs, thresholds, peakThresholds,
               bestPct, bestPctAt, bestPctScore, bestPctThresholds, peakAt =
-            ScanSeason(history, fromTs, SeasonBoundary(history, toTs))
+            ScanSeason(history, fromTs, boundary)
+
+        -- The ladder as it stood when the season closed, which is not the one
+        -- in force at this character's last run. Cutoffs climb all season, so
+        -- a score set in April and never improved on is worth less by August,
+        -- and the closing rank has to say so. This used to fall out of the
+        -- history by accident, because a point was written on every day the
+        -- cutoffs moved; it is stated outright now that they no longer are.
+        local closingThresholds = ThresholdsAt(boundary, history, #history)
 
         -- The tracked peak survives history trimming, so it can be higher than
         -- anything still in the points. When it is, the moment it happened is
@@ -546,7 +594,7 @@ local function CollectSeasonChars(fromTs, toTs)
                 final     = final or peak,
                 ended     = finalTs,
                 peakRank  = RankIdFor(peak, peakThresholds or thresholds),
-                finalRank = RankIdFor(final or peak, thresholds),
+                finalRank = RankIdFor(final or peak, closingThresholds or thresholds),
                 -- Stored now, not derived later: an archived season's cutoffs
                 -- are gone, and today's would misjudge an old peak.
                 peakPct   = ScorePercentile(peak, peakThresholds or thresholds),
@@ -920,6 +968,28 @@ end
 function RR:GetViewedSeason()
     if not viewSeasonIndex then return nil end
     return self.db.seasonArchive and self.db.seasonArchive[viewSeasonIndex]
+end
+
+--- The time window the graph should draw, for whichever season is selected.
+---
+--- A day range is measured back from now while the running season is shown,
+--- and back from the archived season's close while a past one is: counting
+--- back from today would land entirely after a season that has already ended
+--- and draw nothing at all.
+---
+--- "Season" means that season's own span. Anchoring it to SEASON_START, which
+--- is the running season's start, put the whole of every archived season
+--- before the window and emptied the graph the moment one was selected.
+---@return number cutoff, number|nil latest
+function RR:HistoryWindow(rangeDays)
+    local record = self:GetViewedSeason()
+    local ends = record and record.ended or nil
+    local anchor = ends or time()
+
+    if rangeDays and rangeDays > 0 then
+        return anchor - rangeDays * 86400, ends
+    end
+    return record and (record.start or 0) or SEASON_START, ends
 end
 
 --- @param index number|nil  archive index, or nil for the running season
@@ -1679,15 +1749,6 @@ end
 
 -- ── Graph Rendering ─────────────────────────────────────────────────────────
 
-local function GetThresholdsAtIndex(history, idx)
-    for i = idx, 1, -1 do
-        if history[i][3] then
-            return history[i][3]
-        end
-    end
-    return RR.db and RR.db.thresholds or {}
-end
-
 -- Solo mode: filled area chart in the current rank's colour.
 local function DrawSoloChart(visData, MapX, MapY, rankColor)
     local c = rankColor
@@ -1859,7 +1920,7 @@ local function UpdateDeltaHeader(self)
     end
 
     local rangeDays = self.historyFrame.activeRange or 0
-    local cutoff = rangeDays > 0 and (time() - rangeDays * 86400) or SEASON_START
+    local cutoff = self:HistoryWindow(rangeDays)
 
     local currentScore = history[#history][2]
     local currentRank  = self:GetRankForScore(currentScore)
@@ -1875,7 +1936,7 @@ local function UpdateDeltaHeader(self)
         end
     end
     local pastScore = history[pastIdx][2]
-    local pastThresholds = GetThresholdsAtIndex(history, pastIdx)
+    local pastThresholds = ThresholdsAt(history[pastIdx][1], history, pastIdx)
 
     local scoreDelta = currentScore - pastScore
     local rangeLabel = rangeDays > 0 and (rangeDays .. "d") or "Season"
@@ -1968,7 +2029,7 @@ function RR:RefreshHistoryGraph()
 
     -- Filter by time range and collect all data for Y/X bounds.
     local rangeDays = self.historyFrame.activeRange or 0
-    local cutoff = rangeDays > 0 and (time() - rangeDays * 86400) or SEASON_START
+    local cutoff = self:HistoryWindow(rangeDays)
 
     local globalMinScore, globalMaxScore = math.huge, -math.huge
     local globalMinTime, globalMaxTime   = math.huge, -math.huge
@@ -2035,13 +2096,13 @@ function RR:RefreshHistoryGraph()
         if history then
             for i, e in ipairs(history) do
                 if e[1] >= cutoff then
-                    table.insert(entries, { e[1], e[2], GetThresholdsAtIndex(history, i) })
+                    table.insert(entries, { e[1], e[2], ThresholdsAt(e[1], history, i) })
                 end
             end
             for i = #history, 1, -1 do
                 if history[i][1] < cutoff then
                     table.insert(entries, 1, {
-                        cutoff, history[i][2], GetThresholdsAtIndex(history, i)
+                        cutoff, history[i][2], ThresholdsAt(cutoff, history, i)
                     })
                     break
                 end
