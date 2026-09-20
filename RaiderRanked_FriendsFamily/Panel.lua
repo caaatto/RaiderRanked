@@ -317,6 +317,18 @@ local function HideRow(row)
     row.name:Hide(); row.score:Hide(); row.head:Hide(); row.rule:Hide()
 end
 
+--- A pooled row carries four parts and each use needs two of them: a section
+--- heading is a rule and a caption, an entry is a name and a score. The pair
+--- not in use has to be put away, or it stays exactly where the last draw
+--- left it and the next draw appears to overlap itself.
+local function UseAsHeading(row)
+    row.name:Hide(); row.score:Hide()
+end
+
+local function UseAsEntry(row)
+    row.head:Hide(); row.rule:Hide()
+end
+
 --- Every rank stacked, best at the top, divided by a rule.
 ---
 --- Vertical rather than side by side: a rank column is only as wide as the
@@ -344,6 +356,7 @@ local function DrawFull(entries)
 
     if #columns == 0 then
         local row = AcquireRow(1)
+        UseAsHeading(row)
         used = 1
         row.head:ClearAllPoints()
         row.head:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", PAD, 0)
@@ -360,6 +373,7 @@ local function DrawFull(entries)
         local col = columns[i]
         used = used + 1
         local row = AcquireRow(used)
+        UseAsHeading(row)
 
         if used > 1 then y = y + 8 end
         row.rule:ClearAllPoints()
@@ -380,6 +394,7 @@ local function DrawFull(entries)
         for _, e in ipairs(col.members) do
             used = used + 1
             local entryRow = AcquireRow(used)
+            UseAsEntry(entryRow)
             PlaceIn(scrollChild, entryRow, PAD + 12, y, ROW_W)
             PaintEntry(entryRow, e)
             y = y + ROW_H
