@@ -1755,6 +1755,17 @@ function RR:RegisterSettings()
         function() return self.db.showPrevSeason ~= false end,
         function(val) self.db.showPrevSeason = val end)
 
+    AddCheckbox("shareGuildScore",
+        "Share my score with my guild",
+        "Send your M+ score to guildmates running RaiderRanked, so /rr guild "
+            .. "can rank the guild. Turning this off also takes you off their "
+            .. "boards, rather than reading along without contributing.",
+        function() return self.db.shareGuildScore ~= false end,
+        function(val)
+            self.db.shareGuildScore = val
+            if val then self:BroadcastGuildScore(true) end
+        end)
+
     AddCheckbox("historyClassColors",
         "Class colours in score history",
         "Colour each character's line in the score history graph by its class "

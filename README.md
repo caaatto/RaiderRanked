@@ -17,6 +17,7 @@ Download from [CurseForge](https://www.curseforge.com/wow/addons/raiderranked) o
 | `/rr ranks` | Show current thresholds |
 | `/rr ladder` | Open on the Rank Ladder tab |
 | `/rr seasons` | Open on the Seasons tab |
+| `/rr guild` | M+ scores across your guild |
 | `/rr set <RANK> <score>` | Override a threshold |
 | `/rr reset` | Restore default thresholds |
 | `/rr cutoff` | Show active region / faction |
@@ -53,6 +54,7 @@ Everything below is reachable via ESC → Options → AddOns → RaiderRanked.
 | Show wings on other players | on | Wings on target, focus, and party portraits |
 | Unlock rank-up pop-up position | off | Drag handle for the rank-up pop-up |
 | Class colours in score history | off | Colour history lines by class instead of the default palette |
+| Share my score with my guild | on | Report your score to guildmates running the addon, and appear on their guild board |
 | Show minimap button | on | RaiderRanked button on the minimap |
 | Cutoff region / faction | Europe / All Factions | Which cutoff set drives the thresholds |
 
@@ -217,6 +219,39 @@ still exist.
 
 Only max-level characters can be meaningfully unranked, so lower-level units
 get no rank line at all rather than a misleading one.
+
+## Guild Board
+
+`/rr guild` ranks your guild by M+ score, highest first. It draws on three
+sources, in order of how first-hand they are:
+
+1. **Guildmates running RaiderRanked.** They answer with the score their own
+   client reports, over the same addon-message mechanism the live rank already
+   uses. Exact, but only while they are online.
+2. **What was heard earlier**, kept across sessions with the date it was heard,
+   so the board does not start empty on every login. Entries older than 30 days
+   are dropped.
+3. **RaiderIO**, if it happens to be installed, for everyone else.
+
+There is no fourth source, and that part is worth saying plainly: WoW exposes no
+way to read another player's M+ rating without a unit reference. The guild
+roster carries names, levels and classes, never scores. A guildmate who is
+offline, has never run this addon and is unknown to RaiderIO therefore cannot
+appear at all.
+
+The board says how much of your guild it actually covers:
+
+```
+RaiderRanked: Eternal Sunrise - 7 of 43 members with a score
+```
+
+That line is the difference between a board that looks broken and one that is
+honest about a limit it cannot do anything about. The figure grows on its own as
+more of the guild installs the addon, or simply logs in while you are online.
+
+Sharing is on by default and can be turned off in the settings. Turning it off
+also takes you off other people's boards, rather than letting you read along
+without contributing.
 
 ## Rank-Up Pop-Up
 
