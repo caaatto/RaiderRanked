@@ -25,9 +25,6 @@ RR.DB_DEFAULTS = {
     -- Score history
     historyClassColors = false,  -- colour character lines by class instead of palette
     showPrevSeason     = true,   -- last season's rank on unit tooltips
-    -- Guild board. Sharing off means this character neither sends its score
-    -- nor appears on anyone else's board; see GuildScores.lua.
-    shareGuildScore    = true,
     -- PvP
     pvpThresholds     = nil,
     showPvPFrame      = false,  -- opt-in via Settings
@@ -595,9 +592,6 @@ function RR:HandleSlashCommand(msg)
     elseif msg == "ladder" then
         self:ToggleRankLadder()
 
-    elseif msg == "guild" then
-        self:PrintGuildBoard(20)
-
     elseif msg == "seasons" then
         self:ToggleSeasonsPanel()
 
@@ -665,7 +659,6 @@ function RR:HandleSlashCommand(msg)
         print("  /rr ranks              - list current thresholds")
         print("  /rr ladder             - rank ladder, all ranks and your position")
         print("  /rr seasons            - season results per character")
-        print("  /rr guild              - M+ scores across your guild")
         print("  /rr history            - toggle score history graph")
         print("  /rr history clear      - clear all history data")
         print("  /rr classcolors        - class colours in the history graph")

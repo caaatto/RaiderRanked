@@ -21,8 +21,8 @@ PvPAuraAnimation.lua
 Core.lua
 ScoreHistory.lua
 PrevSeason.lua
-GuildScores.lua
 UI.lua
 Panels.lua
 Animation.lua
 Tests.lua
+API.lua

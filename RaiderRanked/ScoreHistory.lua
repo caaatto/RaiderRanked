@@ -30,11 +30,58 @@ local LTTB
 local TAB_W, TAB_H  = 92, 26
 local TAB_GAP       = 4
 local TAB_TOP       = 14   -- first tab, below the window's accent strip
+-- build and refresh name methods on RR instead of holding the functions, so
+-- a tab can be registered before the file that defines its panel has run.
 local TABS = {
-    { id = "history", label = "History", title = "Score History" },
-    { id = "ladder",  label = "Ladder",  title = "Rank Ladder"   },
-    { id = "seasons", label = "Seasons", title = "Seasons"       },
+    { id = "history", label = "History", title = "Score History",
+      refresh = "RefreshHistoryGraph" },
+    { id = "ladder",  label = "Ladder",  title = "Rank Ladder",
+      build   = "BuildLadderPane",  refresh = "RefreshRankLadder" },
+    { id = "seasons", label = "Seasons", title = "Seasons",
+      build   = "BuildSeasonsPane", refresh = "RefreshSeasonsPanel" },
 }
+
+--- Calls a tab hook, which is either a method name on the shared table or a
+--- plain function.
+---
+--- Both forms are needed. The built-in tabs name methods, which lets them be
+--- declared before those methods exist. A separate addon cannot put anything
+--- on the shared table at all, so it passes its function directly.
+local function CallTabHook(hook, ...)
+    if type(hook) == "function" then return hook(...) end
+    if type(hook) == "string" and RR[hook] then return RR[hook](RR, ...) end
+end
+
+--- Adds a tab to the score history window.
+---
+--- For separate addons that extend RaiderRanked. build and refresh are
+--- method names looked up on the shared table when they are needed, so the
+--- module can register at login and define its panel afterwards.
+---
+--- The window is built on first open and its tabs are fixed from that
+--- moment, so registration has to happen before the player opens it. Login
+--- is early enough; anything later is not.
+---@param def table  { id, label, title, build?, refresh? }  hooks may be
+---  a method name on the shared table or a function
+function RR:RegisterTab(def)
+    if type(def) ~= "table" or not (def.id and def.label) then return false end
+    for _, t in ipairs(TABS) do
+        if t.id == def.id then return false end
+    end
+    if self.historyFrame then
+        -- Too late to matter, and silently doing nothing would look like the
+        -- registration worked.
+        return false
+    end
+    table.insert(TABS, {
+        id      = def.id,
+        label   = def.label,
+        title   = def.title or def.label,
+        build   = def.build,
+        refresh = def.refresh,
+    })
+    return true
+end
 
 -- Abbreviated rank names for the Y-axis labels (shared with RankSystem).
 local RANK_SHORT = RR.RANK_SHORT
@@ -1786,8 +1833,9 @@ local function CreateHistoryFrame()
 
     -- The other two views live in Panels.lua and fill their pane below the
     -- tab strip. Built here so all three exist from the first Show.
-    RR:BuildLadderPane(f.panes.ladder)
-    RR:BuildSeasonsPane(f.panes.seasons)
+    for _, t in ipairs(TABS) do
+        if t.build then CallTabHook(t.build, f.panes[t.id]) end
+    end
 
     tinsert(UISpecialFrames, "RaiderRankedHistoryFrame")  -- Escape closes it
     f:Hide()
@@ -1814,17 +1862,12 @@ function RR:SetHistoryTab(id)
     end
 
     for _, t in ipairs(TABS) do
-        if t.id == id and f.title then
-            f.title:SetText("|cff00ccff" .. t.title .. "|r")
+        if t.id == id then
+            if f.title then
+                f.title:SetText("|cff00ccff" .. t.title .. "|r")
+            end
+            if t.refresh then CallTabHook(t.refresh) end
         end
-    end
-
-    if id == "history" then
-        self:RefreshHistoryGraph()
-    elseif id == "ladder" then
-        self:RefreshRankLadder()
-    elseif id == "seasons" then
-        self:RefreshSeasonsPanel()
     end
 end
 
