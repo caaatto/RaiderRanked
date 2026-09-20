@@ -2,51 +2,46 @@
 -- The module's tab in the score history window, its slash command and its one
 -- setting.
 --
--- The board is laid out as one column per rank, ascending left to right, with
--- everyone standing in the column they belong to. That shape answers the
--- question the list form could not: where the field actually sits. A sorted
--- list says who is ahead; columns say that eleven people are stuck in Gold and
--- two made it to Diamond.
---
--- Only ranks with somebody in them get a column. Ten columns across 680px
--- leaves 68px each, which is not enough for a name, and most guilds do not
--- span the whole ladder anyway.
+-- One division at a time, the way a ranked ladder reads: the rank you are in,
+-- bounded above and below by the scores that leave it. Arrows step through the
+-- other divisions. Showing every rank at once fits more on screen but answers
+-- a different question - this view is about the division you are actually in
+-- and what it would take to leave it.
 
 local ADDON_NAME, FF = ...
 
 local RR = _G.RaiderRanked
 
-local PAD      = 12
-local ROW_H    = 15
-local HEAD_Y   = 58     -- below the window title and the filter row
-local LIST_Y   = HEAD_Y + 20
-local MAX_ROWS = 20
-local MIN_COL  = 62
+local PAD       = 14
+local ROW_H     = 16
+local SUB_COLS  = 3      -- names are short; three across use the width
+local SUB_ROWS  = 13
+local TITLE_Y   = 30
+local UPPER_Y   = 58     -- the cutoff out of this division
+local LIST_Y    = UPPER_Y + 22
 
 -- Guild and friends are told apart by colour rather than by being separate
--- lists, so one look covers both. Self is white because it is the one row
--- being looked for.
+-- lists, so one look covers both. Self is white: it is the row being looked
+-- for.
 local COLOR = {
     guild   = { 0.35, 0.95, 0.50 },
     friends = { 0.45, 0.82, 1.00 },
     self    = { 1.00, 1.00, 1.00 },
 }
 
-local pane, filterButtons, caption, headers, cells, divider
+local pane, filterButtons, title, leftArrow, rightArrow
+local upperLine, lowerLine, footer, cells
 local activeFilter = "all"
+local viewIndex                     -- into RR.RANKS, highest first
 
 -- ── Data ───────────────────────────────────────────────────────────────────
 
---- Everyone the filter allows, tagged with where they came from.
----
---- A character in the guild who is also a friend appears once, as guild: the
---- guild figure is the one that came with a roster behind it.
 local function Collect()
     local out, seen = {}, {}
 
     local function take(entries, origin)
         for _, e in ipairs(entries) do
-            if not seen[e.name] then
+            if e.name and not seen[e.name] then
                 seen[e.name] = true
                 e.origin = origin
                 table.insert(out, e)
@@ -54,53 +49,45 @@ local function Collect()
         end
     end
 
-    if activeFilter ~= "friends" then
-        local guildEntries = FF.GetBoard()
-        take(guildEntries, "guild")
-    end
-    if activeFilter ~= "guild" then
-        local friendEntries = FF.GetFriendBoard()
-        take(friendEntries, "friends")
-    end
-
+    if activeFilter ~= "friends" then take(FF.GetBoard(), "guild") end
+    if activeFilter ~= "guild"   then take(FF.GetFriendBoard(), "friends") end
     return out
 end
 
---- Groups them into columns, lowest rank first, dropping ranks nobody is in.
----@return table columns  { {rank, members} }
-local function Columns(entries)
-    local byRank = {}
-    for _, e in ipairs(entries) do
-        local id = e.rank and e.rank.id
-        if id then
-            byRank[id] = byRank[id] or {}
-            table.insert(byRank[id], e)
-        end
+--- Ranks worth stepping through, highest first, without UNRANKED.
+local function Divisions()
+    local out = {}
+    for _, rank in ipairs(RR.RANKS) do
+        if rank.id ~= "UNRANKED" then table.insert(out, rank) end
     end
+    return out
+end
 
-    -- RR.RANKS runs highest first; the board reads the other way.
-    local columns = {}
-    for i = #RR.RANKS, 1, -1 do
-        local rank = RR.RANKS[i]
-        local members = byRank[rank.id]
-        if members and rank.id ~= "UNRANKED" then
-            table.sort(members, function(a, b) return a.score > b.score end)
-            table.insert(columns, { rank = rank, members = members })
-        end
+--- Where the player sits, so the view opens on their own division rather than
+--- at one end of the ladder.
+local function OwnIndex(divisions)
+    local score = RR.GetScoreForUnit("player")
+    local rank  = score and RR.GetRankForScore(score)
+    for i, d in ipairs(divisions) do
+        if rank and d.id == rank.id then return i end
     end
-    return columns
+    return #divisions  -- the bottom, which is where an unranked character is
 end
 
 -- ── Drawing ────────────────────────────────────────────────────────────────
 
-local function Cell(parent)
-    local fs = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+local function Cell(parent, template)
+    local fs = parent:CreateFontString(nil, "OVERLAY", template or "GameFontNormalSmall")
     fs:SetJustifyH("LEFT")
-    -- Truncated rather than wrapped: a name that runs onto a second line would
-    -- push every row below it out of alignment with the next column.
     fs:SetWordWrap(false)
     fs:Hide()
     return fs
+end
+
+local function Step(delta)
+    local divisions = Divisions()
+    viewIndex = math.min(#divisions, math.max(1, (viewIndex or OwnIndex(divisions)) + delta))
+    FF.RefreshPane()
 end
 
 local function SetFilter(which)
@@ -114,124 +101,155 @@ end
 local function BuildPane(p)
     pane = p
 
+    -- Arrows flank the division name, so stepping reads as moving along the
+    -- ladder rather than as paging through a list.
+    leftArrow = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+    leftArrow:SetSize(26, 22)
+    leftArrow:SetText("<")
+    leftArrow:SetPoint("TOP", p, "TOP", -110, -(TITLE_Y - 4))
+    -- Down the ladder is a higher index, since RANKS runs highest first.
+    leftArrow:SetScript("OnClick", function() Step(1) end)
+
+    rightArrow = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+    rightArrow:SetSize(26, 22)
+    rightArrow:SetText(">")
+    rightArrow:SetPoint("TOP", p, "TOP", 110, -(TITLE_Y - 4))
+    rightArrow:SetScript("OnClick", function() Step(-1) end)
+
+    title = p:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOP", p, "TOP", 0, -TITLE_Y)
+
     filterButtons = {}
     local prev
     for _, def in ipairs({ { id = "all",     label = "All" },
                            { id = "guild",   label = "Guild" },
                            { id = "friends", label = "Friends" } }) do
         local b = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
-        b:SetSize(64, 20)
+        b:SetSize(58, 20)
         b:SetText(def.label)
         if prev then
-            b:SetPoint("LEFT", prev, "RIGHT", 4, 0)
+            b:SetPoint("LEFT", prev, "RIGHT", 3, 0)
         else
-            b:SetPoint("TOPLEFT", p, "TOPLEFT", PAD, -26)
+            b:SetPoint("TOPLEFT", p, "TOPLEFT", PAD, -(TITLE_Y - 2))
         end
         b:SetScript("OnClick", function() SetFilter(def.id) end)
         filterButtons[def.id] = b
         prev = b
     end
 
-    caption = p:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    caption:SetPoint("TOPRIGHT", p, "TOPRIGHT", -PAD, -30)
-    caption:SetJustifyH("RIGHT")
+    upperLine = Cell(p, "GameFontNormalSmall")
+    upperLine:SetPoint("TOPLEFT", p, "TOPLEFT", PAD, -UPPER_Y)
+    upperLine:SetPoint("TOPRIGHT", p, "TOPRIGHT", -PAD, -UPPER_Y)
+    upperLine:SetJustifyH("CENTER")
 
-    divider = p:CreateTexture(nil, "ARTWORK")
-    divider:SetColorTexture(0.25, 0.30, 0.38, 0.9)
-    divider:SetHeight(1)
-    divider:SetPoint("TOPLEFT", p, "TOPLEFT", PAD, -(HEAD_Y + 14))
-    divider:SetPoint("TOPRIGHT", p, "TOPRIGHT", -PAD, -(HEAD_Y + 14))
+    lowerLine = Cell(p, "GameFontNormalSmall")
+    lowerLine:SetJustifyH("CENTER")
 
-    headers, cells = {}, {}
-    for c = 1, #RR.RANKS do
-        headers[c] = Cell(p)
-        cells[c] = {}
-        for r = 1, MAX_ROWS do
-            cells[c][r] = Cell(p)
-        end
+    footer = Cell(p, "GameFontNormalSmall")
+    footer:SetJustifyH("CENTER")
+
+    cells = {}
+    for i = 1, SUB_COLS * SUB_ROWS do
+        cells[i] = Cell(p)
     end
 
+    viewIndex = OwnIndex(Divisions())
     SetFilter(activeFilter)
+end
+
+--- The boundary lines. Above is what it takes to leave this division upwards,
+--- below is the score that put you in it - the two numbers that actually
+--- matter while standing in it.
+local function SetBounds(divisions, index, members)
+    local here  = divisions[index]
+    local above = divisions[index - 1]
+
+    if above then
+        upperLine:SetText(string.format("|cff%02x%02x%02x%s|r  |cffaaaaaa%d and up|r",
+            above.color.r * 255, above.color.g * 255, above.color.b * 255,
+            above.name, above.minScore))
+    else
+        upperLine:SetText("|cffaaaaaaNothing above this|r")
+    end
+    upperLine:Show()
+
+    local y = LIST_Y + SUB_ROWS * ROW_H + 10
+    lowerLine:ClearAllPoints()
+    lowerLine:SetPoint("TOPLEFT", pane, "TOPLEFT", PAD, -y)
+    lowerLine:SetPoint("TOPRIGHT", pane, "TOPRIGHT", -PAD, -y)
+    lowerLine:SetText(string.format("|cff%02x%02x%02x%s|r  |cffaaaaaastarts at %d|r",
+        here.color.r * 255, here.color.g * 255, here.color.b * 255,
+        here.name, here.minScore))
+    lowerLine:Show()
+
+    footer:ClearAllPoints()
+    footer:SetPoint("TOPLEFT", pane, "TOPLEFT", PAD, -(y + 20))
+    footer:SetPoint("TOPRIGHT", pane, "TOPRIGHT", -PAD, -(y + 20))
+    footer:SetText(string.format("|cff888888%d here|r", #members))
+    footer:Show()
 end
 
 function FF.RefreshPane()
     if not pane then return end
 
-    local entries = Collect()
-    local columns = Columns(entries)
+    local divisions = Divisions()
+    viewIndex = viewIndex or OwnIndex(divisions)
+    local here = divisions[viewIndex]
 
-    local usable = pane:GetWidth() - PAD * 2
-    local colW   = #columns > 0 and math.max(MIN_COL, usable / #columns) or usable
-
-    local guildCount, friendCount = 0, 0
-    for _, e in ipairs(entries) do
-        if e.origin == "guild" then guildCount = guildCount + 1
-        else friendCount = friendCount + 1 end
+    local members = {}
+    for _, e in ipairs(Collect()) do
+        if e.rank and e.rank.id == here.id then table.insert(members, e) end
     end
-    caption:SetText(string.format(
-        "|cff59f280%d guild|r   |cff73d1ff%d friends|r", guildCount, friendCount))
+    table.sort(members, function(a, b) return a.score > b.score end)
 
-    for c = 1, #headers do
-        local col = columns[c]
-        local head = headers[c]
+    title:SetText(here.name)
+    title:SetTextColor(here.color.r, here.color.g, here.color.b)
 
-        if col then
-            local x = PAD + (c - 1) * colW
-            head:ClearAllPoints()
-            head:SetPoint("TOPLEFT", pane, "TOPLEFT", x, -HEAD_Y)
-            head:SetWidth(colW - 6)
-            head:SetText(string.format("%s  %d",
-                RR.RANK_SHORT[col.rank.id] or col.rank.name,
-                #col.members))
-            head:SetTextColor(col.rank.color.r, col.rank.color.g, col.rank.color.b)
-            head:Show()
+    -- Disabled rather than hidden at the ends: a button that vanishes moves
+    -- the title, and the ladder having an end is worth showing.
+    leftArrow:SetEnabled(viewIndex < #divisions)
+    rightArrow:SetEnabled(viewIndex > 1)
 
-            for r = 1, MAX_ROWS do
-                local cell = cells[c][r]
-                local e    = col.members[r]
-                if e then
-                    cell:ClearAllPoints()
-                    cell:SetPoint("TOPLEFT", pane, "TOPLEFT", x, -(LIST_Y + (r - 1) * ROW_H))
-                    cell:SetWidth(colW - 6)
+    SetBounds(divisions, viewIndex, members)
 
-                    -- The score goes with the name rather than in a column of
-                    -- its own: inside one rank the spread is small, and a
-                    -- second column would cost the width the names need.
-                    cell:SetText(string.format("%s  |cff777777%d|r",
-                        Ambiguate(e.name, "guild"), e.score))
+    local colW = (pane:GetWidth() - PAD * 2) / SUB_COLS
+    for i, fs in ipairs(cells) do
+        local e = members[i]
+        if e then
+            -- Column-major, so reading down a column follows the ranking
+            -- instead of jumping across the panel every name.
+            local c = math.floor((i - 1) / SUB_ROWS)
+            local r = (i - 1) % SUB_ROWS
+            fs:ClearAllPoints()
+            fs:SetPoint("TOPLEFT", pane, "TOPLEFT",
+                PAD + c * colW, -(LIST_Y + r * ROW_H))
+            fs:SetWidth(colW - 8)
+            fs:SetText(string.format("%s  |cff777777%d|r",
+                Ambiguate(e.name, "guild"), e.score))
 
-                    local col3 = e.isSelf and COLOR.self or COLOR[e.origin] or COLOR.guild
-                    cell:SetTextColor(col3[1], col3[2], col3[3])
-                    cell:Show()
-                elseif r == MAX_ROWS and #col.members > MAX_ROWS then
-                    cell:ClearAllPoints()
-                    cell:SetPoint("TOPLEFT", pane, "TOPLEFT", x, -(LIST_Y + (r - 1) * ROW_H))
-                    cell:SetWidth(colW - 6)
-                    cell:SetText(string.format("+%d", #col.members - MAX_ROWS + 1))
-                    cell:SetTextColor(0.5, 0.5, 0.5)
-                    cell:Show()
-                else
-                    cell:Hide()
-                end
-            end
+            local rgb = e.isSelf and COLOR.self or COLOR[e.origin] or COLOR.guild
+            fs:SetTextColor(rgb[1], rgb[2], rgb[3])
+            fs:Show()
+        elseif i == #cells and #members > #cells then
+            fs:ClearAllPoints()
+            fs:SetPoint("TOPLEFT", pane, "TOPLEFT",
+                PAD + (SUB_COLS - 1) * colW, -(LIST_Y + (SUB_ROWS - 1) * ROW_H))
+            fs:SetWidth(colW - 8)
+            fs:SetText(string.format("+%d more", #members - #cells + 1))
+            fs:SetTextColor(0.5, 0.5, 0.5)
+            fs:Show()
         else
-            head:Hide()
-            for r = 1, MAX_ROWS do cells[c][r]:Hide() end
+            fs:Hide()
         end
     end
 
-    if #columns == 0 then
-        headers[1]:ClearAllPoints()
-        headers[1]:SetPoint("TOPLEFT", pane, "TOPLEFT", PAD, -LIST_Y)
-        headers[1]:SetWidth(usable)
-        headers[1]:SetText("Nobody to show yet. Guildmates and friends running "
-            .. "this module report in on their own; with RaiderIO installed the "
-            .. "rest are filled in.")
-        headers[1]:SetTextColor(0.6, 0.6, 0.6)
-        headers[1]:SetWordWrap(true)
-        headers[1]:Show()
-    else
-        headers[1]:SetWordWrap(false)
+    if #members == 0 then
+        cells[1]:ClearAllPoints()
+        cells[1]:SetPoint("TOPLEFT", pane, "TOPLEFT", PAD, -LIST_Y)
+        cells[1]:SetWidth(pane:GetWidth() - PAD * 2)
+        cells[1]:SetText("Nobody here.")
+        cells[1]:SetTextColor(0.5, 0.5, 0.5)
+        cells[1]:Show()
     end
 end
 
@@ -246,7 +264,12 @@ frame:SetScript("OnEvent", function()
         label   = "Friends",
         title   = "Friends & Family",
         build   = BuildPane,
-        refresh = function() FF.RefreshPane() end,
+        refresh = function()
+            -- Reopening lands on the player's own division again rather than
+            -- wherever they last browsed to.
+            viewIndex = OwnIndex(Divisions())
+            FF.RefreshPane()
+        end,
     })
 
     SLASH_RAIDERRANKEDFF1 = "/rrff"
