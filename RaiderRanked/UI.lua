@@ -1076,6 +1076,63 @@ local function GetPlayerPortrait()
         and PlayerFrame.PlayerFrameContainer.PlayerPortrait
 end
 
+-- Where Blizzard keeps the icons that belong on top of the dragon: the PvP
+-- badge, the leader crown, the role icon. They are information and the dragon
+-- is decoration, so they win wherever the two overlap.
+local function GetMarkerHost()
+    return PlayerFrame
+        and PlayerFrame.PlayerFrameContent
+        and PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual
+end
+
+-- Where the health bars live, and with them the status glow that lights the
+-- portrait yellow when rested and red in combat (PlayerFrameContentMain.
+-- StatusTexture, OVERLAY sublevel 2).
+local function GetContentHost()
+    return PlayerFrame
+        and PlayerFrame.PlayerFrameContent
+        and PlayerFrame.PlayerFrameContent.PlayerFrameContentMain
+end
+
+--- Frame level for the dragon: over the portrait and the status glow, under
+--- the markers.
+---
+--- Blizzard keeps those two in separate containers that happen to carry the
+--- same frame level, so there is no gap to drop the dragon into. The dragon
+--- takes the level above both, and LiftMarkers raises them clear again.
+---
+--- RaiseOverlayAbove is not used: it lifts an overlay above everything inside
+--- its host, which would bury the PvP badge under the dragon as well.
+---
+--- The levels are measured rather than offset from PlayerFrame, because
+--- Blizzard sets them itself and Edit Mode rebuilds the frame.
+local function PortraitWingsLevel()
+    local base  = PlayerFrame and PlayerFrame:GetFrameLevel() or 0
+    local level = base + 1
+
+    for _, host in ipairs({
+        PlayerFrame and PlayerFrame.PlayerFrameContainer,
+        GetContentHost(),
+    }) do
+        if host then
+            local hostLevel = MaxLevelIn(host, portraitWingsFrame, MAX_LEVEL_SCAN_DEPTH)
+            if hostLevel + 1 > level then level = hostLevel + 1 end
+        end
+    end
+    return level
+end
+
+--- Keeps the markers above the dragon.
+---
+--- Only ever raises: the icons are information and the dragon is decoration,
+--- so wherever Blizzard has put them, they do not go below it.
+local function LiftMarkers(dragonLevel)
+    local markers = GetMarkerHost()
+    if markers and markers:GetFrameLevel() <= dragonLevel then
+        markers:SetFrameLevel(dragonLevel + 1)
+    end
+end
+
 function RR:CreatePortraitWings()
     if not PlayerFrame then return end
 
@@ -1088,7 +1145,7 @@ function RR:CreatePortraitWings()
     -- portrait texture but below health bar chrome and other UI elements.
     local f = CreateFrame("Frame", nil, PlayerFrame)
     f:SetAllPoints(PlayerFrame)
-    f:SetFrameLevel(PlayerFrame:GetFrameLevel() + 2)
+    f:SetFrameLevel(PortraitWingsLevel())
     portraitWingsFrame = f     -- assign before any fallible call
 
     local wing = f:CreateTexture(nil, "ARTWORK", nil, 2)
@@ -1105,6 +1162,11 @@ function RR:CreatePortraitWings()
 
     self:UpdatePortraitWings()
 end
+
+-- Declared ahead of DebugWings, which reads them: further down they would be
+-- a global nil there and GetAtlasInfo would throw.
+local WINGS_ATLAS_PLAIN  = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold"
+local WINGS_ATLAS_WINGED = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold-Winged"
 
 --- Debug: print portrait wing state.
 function RR:DebugWings()
@@ -1125,6 +1187,26 @@ function RR:DebugWings()
     else
         print("  portraitWingsTex: nil")
     end
+    -- Draw order is what goes wrong on this frame. The dragon has to clear
+    -- both containers that paint the portrait - the portrait art and the
+    -- status glow - and stay under the markers.
+    local container = PlayerFrame and PlayerFrame.PlayerFrameContainer
+    local content   = GetContentHost()
+    local markers   = GetMarkerHost()
+    print("  Frame levels:")
+    print("    PlayerFrame:       " .. tostring(PlayerFrame and PlayerFrame:GetFrameLevel()))
+    print("    portrait container: " .. tostring(container and container:GetFrameLevel())
+        .. "  (subtree max " .. tostring(container
+            and MaxLevelIn(container, portraitWingsFrame, MAX_LEVEL_SCAN_DEPTH)) .. ")")
+    print("    status glow host:  " .. tostring(content and content:GetFrameLevel()))
+    print("    markers:           " .. tostring(markers and markers:GetFrameLevel()))
+    print("    wings:             " .. tostring(portraitWingsFrame and portraitWingsFrame:GetFrameLevel())
+        .. "  (wants " .. tostring(PortraitWingsLevel()) .. ")")
+    if portraitWingsTex then
+        local layer, sublevel = portraitWingsTex:GetDrawLayer()
+        print("    wing texture:      " .. tostring(layer) .. " sublevel " .. tostring(sublevel))
+    end
+
     -- Atlas info dump
     local ai = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(WINGS_ATLAS_PLAIN)
     if ai then
@@ -1135,8 +1217,6 @@ function RR:DebugWings()
     end
 end
 
-local WINGS_ATLAS_PLAIN  = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold"
-local WINGS_ATLAS_WINGED = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold-Winged"
 
 -- Returns the correct atlas for a given rank + score.
 local function GetWingsAtlas(rank, score)
@@ -1172,7 +1252,12 @@ end
 
 function RR:UpdatePortraitWings()
     if not portraitWingsTex then return end
-    local rank = self.playerRank or self:GetRankForScore(0)
+    -- /rr wings rank overrides both of these. The score has to come with the
+    -- rank because the plain and winged atlases are chosen by score, not by
+    -- rank, so a rank on its own cannot say which of the two to draw.
+    local preview = self.wingsPreview
+    local rank    = (preview and preview.rank) or self.playerRank
+        or self:GetRankForScore(0)
 
     if rank.id == "UNRANKED" or not (self.db and self.db.showWings ~= false) then
         portraitWingsTex:Hide()
@@ -1181,7 +1266,7 @@ function RR:UpdatePortraitWings()
 
     local c       = rank.color
     local portrait = GetPlayerPortrait()
-    local score  = self.playerScore or 0
+    local score   = (preview and preview.score) or self.playerScore or 0
     local atlas  = GetWingsAtlas(rank, score)
 
     -- Re-anchor every update in case PlayerFrame was rebuilt (e.g. after UI reload).
@@ -1191,9 +1276,11 @@ function RR:UpdatePortraitWings()
         local xOff = (atlas == WINGS_ATLAS_WINGED) and -10 or 0
         portraitWingsTex:SetPoint("CENTER", portrait, "CENTER", xOff, 0)
         -- Being a child of PlayerFrame is not enough on its own: sibling
-        -- containers inside it carry their own levels. Measure, same as for
-        -- the unit frames.
-        self:RaiseOverlayAbove(portraitWingsFrame, PlayerFrame)
+        -- containers inside it carry their own levels, so the level is
+        -- measured every update - bounded, so the markers stay in front.
+        local level = PortraitWingsLevel()
+        portraitWingsFrame:SetFrameLevel(level)
+        LiftMarkers(level)
     end
     local ai     = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas)
     if ai then
@@ -1228,6 +1315,56 @@ function RR:UpdatePortraitWings()
         and PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual
         and PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.PlayerRestLoop
     if ri and ri.SetPointsOffset then ri:SetPointsOffset(87, 14) end
+end
+
+
+
+--- Draws the portrait wings at a rank the character has not earned.
+---
+--- Each rank has two looks: plain below its wingScore, winged at or above it.
+--- A trailing "+" asks for the winged one, so "master" and "master+" are the
+--- pair worth comparing. Repeating a look, or "off", hands the display back
+--- to the real score.
+function RR:PreviewWingsRank(arg)
+    arg = tostring(arg or ""):lower()
+
+    if arg == "" or arg == "off" then
+        self.wingsPreview = nil
+        self:UpdatePortraitWings()
+        print("|cff00ccffRaiderRanked|r Wings preview off.")
+        return
+    end
+
+    local winged = arg:sub(-1) == "+"
+    local rank   = self.RANK_BY_ID[(winged and arg:sub(1, -2) or arg):upper()]
+    if not rank or rank.id == "UNRANKED" then
+        print("|cff00ccffRaiderRanked|r Unknown rank: " .. arg)
+        print("  IRON BRONZE SILVER GOLD PLATINUM EMERALD DIAMOND MASTER GRANDMASTER CHALLENGER")
+        print("  Add + for the winged variant, e.g. /rr wings rank master+")
+        return
+    end
+
+    local current = self.wingsPreview
+    if current and current.rank == rank and current.winged == winged then
+        return self:PreviewWingsRank("off")
+    end
+
+    self.wingsPreview = {
+        rank   = rank,
+        winged = winged,
+        -- wingScore is the midpoint of the bracket, so minScore always lands
+        -- below it and reliably produces the plain atlas.
+        score  = winged and rank.wingScore or rank.minScore,
+    }
+    self:UpdatePortraitWings()
+
+    print(string.format("|cff00ccffRaiderRanked|r Wings preview: %s, %s. Repeat or 'off' to stop.",
+        self:GetRankDisplayName(rank, self.wingsPreview.score),
+        winged and "winged" or "plain"))
+
+    if self.db and self.db.showWings == false then
+        print("  |cffff8800Show wings on player portrait is off, so nothing is drawn.|r")
+    end
 end
 
 -- ── Unit portrait wings (target / focus / party1-4) ─────────────────────────

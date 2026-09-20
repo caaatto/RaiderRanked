@@ -524,6 +524,9 @@ function RR:HandleSlashCommand(msg)
         local unit = msg:match("^wings%s+test%s*(%S*)$")
         self:TestUnitWings((unit and unit ~= "") and unit or "target")
 
+    elseif msg:match("^wings%s+rank%s+%S+$") then
+        self:PreviewWingsRank(msg:match("^wings%s+rank%s+(%S+)$"))
+
     elseif msg:match("^wings%s+%d+$") then
         self:SetPortraitWingsSize(msg:match("^wings%s+(%d+)$"))
 
@@ -632,6 +635,7 @@ function RR:HandleSlashCommand(msg)
         print("  /rr pvpdebug           - PvP rating per bracket")
         print("  /rr wings debug [unit] - wing anchor, draw order and scale")
         print("  /rr wings test [unit]  - force wings onto a unit to check placement")
+        print("  /rr wings rank <id>[+] - draw your own wings at any rank; + for winged")
         print("  /rr test               - run the in-game test suite")
 
     else

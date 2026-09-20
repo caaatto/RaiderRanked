@@ -35,7 +35,7 @@ Download from [CurseForge](https://www.curseforge.com/wow/addons/raiderranked) o
 | `/rr pvpaura <size>` | Resize PvP aura (40-400) |
 | `/rr test` | Run in-game test suite |
 
-Diagnostics are listed separately under `/rr dev`, so the main help stays about the addon rather than about debugging it: `/rr debug` (raw score API output), `/rr groupdbg` (party categories and the resolved broadcast channel), `/rr pvpdebug` (PvP rating per bracket), `/rr wings debug [unit]` (wing anchor, draw order and scale) and `/rr wings test [unit]` (force wings onto a unit to check placement).
+Diagnostics are listed separately under `/rr dev`, so the main help stays about the addon rather than about debugging it: `/rr debug` (raw score API output), `/rr groupdbg` (party categories and the resolved broadcast channel), `/rr pvpdebug` (PvP rating per bracket), `/rr memdbg` (memory floor and what is holding it), `/rr prevdbg [sim]` (last season's sources, with `sim` faking a finished season), `/rr wings debug [unit]` (wing anchor, draw order and frame levels), `/rr wings test [unit]` (force wings onto a unit to check placement) and `/rr wings rank <id>[+]` (draw your own portrait wings at any rank, with `+` for the winged variant).
 
 ## Settings
 
