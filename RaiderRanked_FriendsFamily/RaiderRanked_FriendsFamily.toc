@@ -9,5 +9,6 @@
 ## SavedVariables: RaiderRankedFriendsDB
 
 GuildScores.lua
+FriendScores.lua
 Placement.lua
 Panel.lua

@@ -81,8 +81,10 @@ API.FACTIONS        = RR.CUTOFF_FACTIONS
 API.REGION_LABELS   = RR.CUTOFF_REGION_LABELS
 API.FACTION_LABELS  = RR.CUTOFF_FACTION_LABELS
 
---- The ranks themselves, highest first, for anything that draws a ladder.
-API.RANKS = RR.RANKS
+--- The ranks themselves, highest first, for anything that draws a ladder,
+--- and their abbreviations for anywhere a full name will not fit.
+API.RANKS      = RR.RANKS
+API.RANK_SHORT = RR.RANK_SHORT
 
 --- Lowest level that can carry a score. Below it, absence is not a gap.
 API.MIN_SCORED_LEVEL = RR.MIN_SCORED_LEVEL

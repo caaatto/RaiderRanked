@@ -237,27 +237,35 @@ end
 
 --- Reads the current-season M+ score out of a RaiderIO profile.
 ---
---- The field name varies across RaiderIO versions, so all known ones are
---- tried. Kept in one place because both the unit lookup below and the guild
---- board read profiles, and two copies of this list would drift apart.
+--- GetProfile returns a wrapper - name, realm, region and one sub-profile per
+--- kind of content. The M+ half is mythicKeystoneProfile, and the score sits
+--- there twice: currentScore, and mplusCurrent.score which the tooltip uses.
+--- Both are written together, so either answers.
+---
+--- An earlier version of this looked for mplusCurrent, currentScore and
+--- currentSeasonScore at the top level. None of those exist there, so the
+--- fallback produced nothing and did so quietly - as a fallback behind an API
+--- that answers for every unit you can point at, it was never missed.
 ---@param profile table|nil
 ---@return number|nil score
 function RR:ScoreFromRaiderIOProfile(profile)
     if type(profile) ~= "table" then return nil end
-    if profile.mplusCurrent and type(profile.mplusCurrent.score) == "number"
-        and profile.mplusCurrent.score > 0 then
-        return profile.mplusCurrent.score
+
+    local mkp = profile.mythicKeystoneProfile
+    if type(mkp) ~= "table" then return nil end
+
+    if type(mkp.currentScore) == "number" and mkp.currentScore > 0 then
+        return mkp.currentScore
     end
-    if profile.mythicKeystoneProfile then
-        local s = profile.mythicKeystoneProfile.currentSeasonScore
-        if type(s) == "number" and s > 0 then return s end
-    end
-    if type(profile.currentScore) == "number" and profile.currentScore > 0 then
-        return profile.currentScore
+    if type(mkp.mplusCurrent) == "table"
+        and type(mkp.mplusCurrent.score) == "number"
+        and mkp.mplusCurrent.score > 0 then
+        return mkp.mplusCurrent.score
     end
     return nil
 end
 
+--- Returns the M+ rating for a unit using the native Blizzard API.
 --- Returns the M+ rating for a unit using the native Blizzard API.
 --- Falls back to the RaiderIO addon if the native API returns nothing.
 ---@param unit string  WoW unit token ("player", "target", "mouseover", …)

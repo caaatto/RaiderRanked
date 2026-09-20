@@ -1,120 +1,237 @@
 -- RaiderRanked Friends & Family: Panel.lua
--- The module's tab in the score history window, plus its slash command and
--- its one setting.
+-- The module's tab in the score history window, its slash command and its one
+-- setting.
+--
+-- The board is laid out as one column per rank, ascending left to right, with
+-- everyone standing in the column they belong to. That shape answers the
+-- question the list form could not: where the field actually sits. A sorted
+-- list says who is ahead; columns say that eleven people are stuck in Gold and
+-- two made it to Diamond.
+--
+-- Only ranks with somebody in them get a column. Ten columns across 680px
+-- leaves 68px each, which is not enough for a name, and most guilds do not
+-- span the whole ladder anyway.
 
 local ADDON_NAME, FF = ...
 
 local RR = _G.RaiderRanked
 
-local ROW_H       = 16
-local MAX_ROWS    = 18
-local PAD_LEFT    = 16
-local PAD_TOP     = 34
+local PAD      = 12
+local ROW_H    = 15
+local HEAD_Y   = 58     -- below the window title and the filter row
+local LIST_Y   = HEAD_Y + 20
+local MAX_ROWS = 20
+local MIN_COL  = 62
 
-local pane, header, placeLines, rows
+-- Guild and friends are told apart by colour rather than by being separate
+-- lists, so one look covers both. Self is white because it is the one row
+-- being looked for.
+local COLOR = {
+    guild   = { 0.35, 0.95, 0.50 },
+    friends = { 0.45, 0.82, 1.00 },
+    self    = { 1.00, 1.00, 1.00 },
+}
+
+local pane, filterButtons, caption, headers, cells, divider
+local activeFilter = "all"
+
+-- ── Data ───────────────────────────────────────────────────────────────────
+
+--- Everyone the filter allows, tagged with where they came from.
+---
+--- A character in the guild who is also a friend appears once, as guild: the
+--- guild figure is the one that came with a roster behind it.
+local function Collect()
+    local out, seen = {}, {}
+
+    local function take(entries, origin)
+        for _, e in ipairs(entries) do
+            if not seen[e.name] then
+                seen[e.name] = true
+                e.origin = origin
+                table.insert(out, e)
+            end
+        end
+    end
+
+    if activeFilter ~= "friends" then
+        local guildEntries = FF.GetBoard()
+        take(guildEntries, "guild")
+    end
+    if activeFilter ~= "guild" then
+        local friendEntries = FF.GetFriendBoard()
+        take(friendEntries, "friends")
+    end
+
+    return out
+end
+
+--- Groups them into columns, lowest rank first, dropping ranks nobody is in.
+---@return table columns  { {rank, members} }
+local function Columns(entries)
+    local byRank = {}
+    for _, e in ipairs(entries) do
+        local id = e.rank and e.rank.id
+        if id then
+            byRank[id] = byRank[id] or {}
+            table.insert(byRank[id], e)
+        end
+    end
+
+    -- RR.RANKS runs highest first; the board reads the other way.
+    local columns = {}
+    for i = #RR.RANKS, 1, -1 do
+        local rank = RR.RANKS[i]
+        local members = byRank[rank.id]
+        if members and rank.id ~= "UNRANKED" then
+            table.sort(members, function(a, b) return a.score > b.score end)
+            table.insert(columns, { rank = rank, members = members })
+        end
+    end
+    return columns
+end
 
 -- ── Drawing ────────────────────────────────────────────────────────────────
 
-local function Line(parent, index, x, y, template)
-    local fs = parent:CreateFontString(nil, "OVERLAY", template or "GameFontNormalSmall")
-    fs:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+local function Cell(parent)
+    local fs = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     fs:SetJustifyH("LEFT")
+    -- Truncated rather than wrapped: a name that runs onto a second line would
+    -- push every row below it out of alignment with the next column.
+    fs:SetWordWrap(false)
+    fs:Hide()
     return fs
 end
 
---- Builds the pane once. Rows are created up front and reused, the way the
---- other panels in this window do it, so refreshing never allocates frames.
+local function SetFilter(which)
+    activeFilter = which
+    for id, b in pairs(filterButtons) do
+        b:SetButtonState(id == which and "PUSHED" or "NORMAL", id == which)
+    end
+    FF.RefreshPane()
+end
+
 local function BuildPane(p)
     pane = p
 
-    header = Line(p, 0, PAD_LEFT, -12, "GameFontNormal")
-    header:SetText("")
-
-    -- Placement block: the same score against every ladder that exists.
-    placeLines = {}
-    for i = 1, #RR.REGIONS * #RR.FACTIONS do
-        placeLines[i] = Line(p, i, PAD_LEFT, -(PAD_TOP + (i - 1) * ROW_H))
-        placeLines[i]:Hide()
+    filterButtons = {}
+    local prev
+    for _, def in ipairs({ { id = "all",     label = "All" },
+                           { id = "guild",   label = "Guild" },
+                           { id = "friends", label = "Friends" } }) do
+        local b = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+        b:SetSize(64, 20)
+        b:SetText(def.label)
+        if prev then
+            b:SetPoint("LEFT", prev, "RIGHT", 4, 0)
+        else
+            b:SetPoint("TOPLEFT", p, "TOPLEFT", PAD, -26)
+        end
+        b:SetScript("OnClick", function() SetFilter(def.id) end)
+        filterButtons[def.id] = b
+        prev = b
     end
 
-    rows = {}
-    for i = 1, MAX_ROWS do
-        rows[i] = Line(p, i, PAD_LEFT, 0)
-        rows[i]:Hide()
+    caption = p:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    caption:SetPoint("TOPRIGHT", p, "TOPRIGHT", -PAD, -30)
+    caption:SetJustifyH("RIGHT")
+
+    divider = p:CreateTexture(nil, "ARTWORK")
+    divider:SetColorTexture(0.25, 0.30, 0.38, 0.9)
+    divider:SetHeight(1)
+    divider:SetPoint("TOPLEFT", p, "TOPLEFT", PAD, -(HEAD_Y + 14))
+    divider:SetPoint("TOPRIGHT", p, "TOPRIGHT", -PAD, -(HEAD_Y + 14))
+
+    headers, cells = {}, {}
+    for c = 1, #RR.RANKS do
+        headers[c] = Cell(p)
+        cells[c] = {}
+        for r = 1, MAX_ROWS do
+            cells[c][r] = Cell(p)
+        end
     end
+
+    SetFilter(activeFilter)
 end
 
---- Where the guild list starts, below however many placement lines were drawn.
-local function GuildTop(placementCount)
-    return PAD_TOP + (placementCount + 1) * ROW_H + 8
-end
-
-local function RefreshPane()
+function FF.RefreshPane()
     if not pane then return end
 
-    -- Placements first: they are about the player, and the guild list below is
-    -- about everyone else.
-    local places, score = FF.GetPlacements()
-    local shown = 0
-    for i, fs in ipairs(placeLines) do
-        local row = places[i]
-        if row then
-            shown = i
-            fs:SetText(string.format("%s%-24s top %.2f%%|r",
-                row.isActive and "|cffffffff" or "|cff777777",
-                row.label, row.percentile))
-            fs:Show()
-        else
-            fs:Hide()
-        end
+    local entries = Collect()
+    local columns = Columns(entries)
+
+    local usable = pane:GetWidth() - PAD * 2
+    local colW   = #columns > 0 and math.max(MIN_COL, usable / #columns) or usable
+
+    local guildCount, friendCount = 0, 0
+    for _, e in ipairs(entries) do
+        if e.origin == "guild" then guildCount = guildCount + 1
+        else friendCount = friendCount + 1 end
     end
+    caption:SetText(string.format(
+        "|cff59f280%d guild|r   |cff73d1ff%d friends|r", guildCount, friendCount))
 
-    if score then
-        header:SetText(string.format("|cff00ccffScore %d|r  |cff888888measured against every ladder|r", score))
-    else
-        header:SetText("|cff888888No score this season yet.|r")
-    end
+    for c = 1, #headers do
+        local col = columns[c]
+        local head = headers[c]
 
-    -- Guild board.
-    local entries, coverage = FF.GetBoard()
-    local top = GuildTop(shown)
+        if col then
+            local x = PAD + (c - 1) * colW
+            head:ClearAllPoints()
+            head:SetPoint("TOPLEFT", pane, "TOPLEFT", x, -HEAD_Y)
+            head:SetWidth(colW - 6)
+            head:SetText(string.format("%s  %d",
+                RR.RANK_SHORT[col.rank.id] or col.rank.name,
+                #col.members))
+            head:SetTextColor(col.rank.color.r, col.rank.color.g, col.rank.color.b)
+            head:Show()
 
-    local caption = rows[1]
-    caption:ClearAllPoints()
-    caption:SetPoint("TOPLEFT", pane, "TOPLEFT", PAD_LEFT, -top)
-    if IsInGuild() then
-        caption:SetText(string.format("|cff00ccff%s|r  |cff888888%d of %d members with a score|r",
-            GetGuildInfo("player") or "Guild", coverage.scored, coverage.total))
-    else
-        caption:SetText("|cff888888Not in a guild.|r")
-    end
-    caption:Show()
+            for r = 1, MAX_ROWS do
+                local cell = cells[c][r]
+                local e    = col.members[r]
+                if e then
+                    cell:ClearAllPoints()
+                    cell:SetPoint("TOPLEFT", pane, "TOPLEFT", x, -(LIST_Y + (r - 1) * ROW_H))
+                    cell:SetWidth(colW - 6)
 
-    for i = 2, MAX_ROWS do
-        local fs = rows[i]
-        local e  = entries[i - 1]
-        if e then
-            fs:ClearAllPoints()
-            fs:SetPoint("TOPLEFT", pane, "TOPLEFT", PAD_LEFT, -(top + (i - 1) * ROW_H))
+                    -- The score goes with the name rather than in a column of
+                    -- its own: inside one rank the spread is small, and a
+                    -- second column would cost the width the names need.
+                    cell:SetText(string.format("%s  |cff777777%d|r",
+                        Ambiguate(e.name, "guild"), e.score))
 
-            -- A cached figure is not a current one, and the date is the only
-            -- thing that keeps the two apart on a board that mixes them.
-            local note = ""
-            if e.source == "cached" and e.ts then
-                note = string.format("  |cff666666%dd ago|r",
-                    math.floor((time() - e.ts) / 86400))
-            elseif e.source == "raiderio" then
-                note = "  |cff666666RaiderIO|r"
+                    local col3 = e.isSelf and COLOR.self or COLOR[e.origin] or COLOR.guild
+                    cell:SetTextColor(col3[1], col3[2], col3[3])
+                    cell:Show()
+                elseif r == MAX_ROWS and #col.members > MAX_ROWS then
+                    cell:ClearAllPoints()
+                    cell:SetPoint("TOPLEFT", pane, "TOPLEFT", x, -(LIST_Y + (r - 1) * ROW_H))
+                    cell:SetWidth(colW - 6)
+                    cell:SetText(string.format("+%d", #col.members - MAX_ROWS + 1))
+                    cell:SetTextColor(0.5, 0.5, 0.5)
+                    cell:Show()
+                else
+                    cell:Hide()
+                end
             end
-
-            fs:SetText(string.format("%s%2d. %-20s %s %d%s|r",
-                e.isSelf and "|cffffffff" or "|cffbbbbbb",
-                i - 1, Ambiguate(e.name, "guild"),
-                RR.GetRankDisplayName(e.rank, e.score, true), e.score, note))
-            fs:Show()
         else
-            fs:Hide()
+            head:Hide()
+            for r = 1, MAX_ROWS do cells[c][r]:Hide() end
         end
+    end
+
+    if #columns == 0 then
+        headers[1]:ClearAllPoints()
+        headers[1]:SetPoint("TOPLEFT", pane, "TOPLEFT", PAD, -LIST_Y)
+        headers[1]:SetWidth(usable)
+        headers[1]:SetText("Nobody to show yet. Guildmates and friends running "
+            .. "this module report in on their own; with RaiderIO installed the "
+            .. "rest are filled in.")
+        headers[1]:SetTextColor(0.6, 0.6, 0.6)
+        headers[1]:SetWordWrap(true)
+        headers[1]:Show()
+    else
+        headers[1]:SetWordWrap(false)
     end
 end
 
@@ -129,7 +246,7 @@ frame:SetScript("OnEvent", function()
         label   = "Friends",
         title   = "Friends & Family",
         build   = BuildPane,
-        refresh = RefreshPane,
+        refresh = function() FF.RefreshPane() end,
     })
 
     SLASH_RAIDERRANKEDFF1 = "/rrff"
@@ -138,15 +255,45 @@ frame:SetScript("OnEvent", function()
 
         if msg == "share" then
             RaiderRankedFriendsDB.share = not FF.Sharing()
-            print(string.format("|cff00ccffRaiderRanked|r Guild sharing: %s",
+            print(string.format("|cff00ccffRaiderRanked|r Score sharing: %s",
                 FF.Sharing() and "|cff00ff00ON|r" or "|cffff0000OFF|r"))
-            if FF.Sharing() then FF.BroadcastScore(true) end
+            if FF.Sharing() then
+                FF.BroadcastScore(true)
+                FF.PollFriends()
+            end
 
         elseif msg == "where" then
             FF.PrintPlacements()
 
         elseif msg == "chat" then
             FF.PrintBoard(20)
+
+        elseif msg == "poll" then
+            FF.RequestScores()
+            FF.PollFriends()
+            print("|cff00ccffRaiderRanked|r Asked the guild and your friends to report in.")
+
+        elseif msg == "dbg" then
+            -- What the fill-in actually sees. Guessing at this cost an evening
+            -- once already: the field names were wrong and every lookup
+            -- returned nothing without saying so.
+            print("|cff00ccffRaiderRanked|r Friends & Family debug")
+            print("  RaiderIO: " .. tostring(RaiderIO and RaiderIO.GetProfile ~= nil))
+            print("  guild members: " .. tostring(GetNumGuildMembers()))
+            local shown = 0
+            for i = 1, (GetNumGuildMembers() or 0) do
+                local name = GetGuildRosterInfo(i)
+                local key  = FF.FullName(name)
+                if key and shown < 5 then
+                    shown = shown + 1
+                    local ok, profile = pcall(RaiderIO.GetProfile, key)
+                    local mkp = ok and type(profile) == "table"
+                        and profile.mythicKeystoneProfile
+                    print(string.format("    %-24s profile=%s  mkp=%s  score=%s",
+                        key, tostring(ok and profile ~= nil), tostring(mkp ~= nil),
+                        tostring(RR.ScoreFromRaiderIOProfile(ok and profile or nil))))
+                end
+            end
 
         else
             RR.OpenTab("friends")
