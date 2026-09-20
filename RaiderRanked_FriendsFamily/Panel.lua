@@ -20,23 +20,25 @@ local PAD      = 14
 local ROW_H    = 16
 local FILTER_Y = 26
 local MODE_Y   = 50
-local HEAD_Y   = 80      -- division bounds, or the column headers
+local HEAD_Y   = 80      -- the division bounds
 local LIST_Y   = HEAD_Y + 22
 
 local DIV_COLS, DIV_ROWS   = 3, 17   -- names inside one division
-local FULL_ROWS            = 15      -- rows per rank column in the full view
 
--- Columns are a fixed width and the block is centred in whatever is left,
--- rather than stretched to the edges. Stretching puts the names against the
--- window frame and leaves the gap in the middle, which reads as two tables.
+-- Division columns are a fixed width and the block is centred in whatever is
+-- left, rather than stretched to the edges. Stretching puts the names against
+-- the window frame and leaves the gap in the middle, which reads as two tables.
 local DIV_COL_W            = 200
-local FULL_COL_W           = 118
-local MIN_COL              = 62
 
 -- How much of a column the name gets; the score takes the rest, right-aligned
 -- against the rule between them.
 local NAME_SHARE           = 0.66
 local RULE_GAP             = 8
+
+-- Width of one stacked row in the full view. Narrower than the window on
+-- purpose: a name and a four-digit score do not need the whole width, and
+-- pulling the two ends that far apart makes them hard to read as one row.
+local ROW_W                = 320
 
 -- Guild and friends are told apart by colour rather than by being separate
 -- lists, so one look covers both. Self is white: it is the row being looked
@@ -49,7 +51,8 @@ local COLOR = {
 
 local pane, filterButtons, modeButtons
 local title, leftArrow, rightArrow, upperLine, lowerLine, footer
-local headers, cells, rules, divider
+local cells, rules
+local scroll, scrollChild, scrollRows
 local activeFilter, activeMode = "all", "division"
 local viewIndex                              -- into RR.RANKS, highest first
 
@@ -137,17 +140,21 @@ end
 
 --- Places a cell inside a column, with the score right-aligned against the
 --- rule so the digits stack instead of drifting with the name length.
-local function Place(cell, x, y, width)
+local function PlaceIn(parent, cell, x, y, width)
     local nameW = math.floor(width * NAME_SHARE)
 
     cell.name:ClearAllPoints()
-    cell.name:SetPoint("TOPLEFT", pane, "TOPLEFT", x, -y)
+    cell.name:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -y)
     cell.name:SetWidth(nameW)
 
     cell.score:ClearAllPoints()
-    cell.score:SetPoint("TOPLEFT", pane, "TOPLEFT", x + nameW + RULE_GAP, -y)
+    cell.score:SetPoint("TOPLEFT", parent, "TOPLEFT", x + nameW + RULE_GAP, -y)
     cell.score:SetWidth(width - nameW - RULE_GAP)
     cell.score:SetJustifyH("RIGHT")
+end
+
+local function Place(cell, x, y, width)
+    PlaceIn(pane, cell, x, y, width)
 end
 
 local function PaintEntry(cell, e)
@@ -175,11 +182,10 @@ end
 
 local function HideAll()
     for _, cell in ipairs(cells) do cell.name:Hide(); cell.score:Hide() end
-    for _, fs in ipairs(headers) do fs:Hide() end
     for _, rule in ipairs(rules) do rule:Hide() end
     upperLine:Hide(); lowerLine:Hide(); footer:Hide()
     title:Hide(); leftArrow:Hide(); rightArrow:Hide()
-    divider:Hide()
+    if scroll then scroll:Hide() end
 end
 
 --- The vertical rule between name and score, drawn per column rather than
@@ -283,67 +289,94 @@ end
 
 -- ── Full view ──────────────────────────────────────────────────────────────
 
+--- Rows are made as they are needed and kept. A guild can put two hundred
+--- names in this list, and creating that many up front would cost every
+--- player who never opens the full view.
+local function AcquireRow(i)
+    local row = scrollRows[i]
+    if not row then
+        row = {
+            name  = Cell(scrollChild),
+            score = Cell(scrollChild),
+            head  = Cell(scrollChild, "GameFontNormal"),
+            rule  = scrollChild:CreateTexture(nil, "ARTWORK"),
+        }
+        row.rule:SetColorTexture(0.30, 0.34, 0.42, 0.8)
+        row.rule:Hide()
+        scrollRows[i] = row
+    end
+    return row
+end
+
+local function HideRow(row)
+    row.name:Hide(); row.score:Hide(); row.head:Hide(); row.rule:Hide()
+end
+
+--- Every rank stacked, best at the top, divided by a rule.
+---
+--- Vertical rather than side by side: a rank column is only as wide as the
+--- window divided by however many ranks are occupied, which is not enough for
+--- a name once the ladder spreads out. Stacked, every row has the full width
+--- and the list simply gets longer, which is what the scroll bar is for.
 local function DrawFull(entries)
+    scroll:Show()
+
     local columns = Columns(entries)
-    local usable  = pane:GetWidth() - PAD * 2
+    local width   = scrollChild:GetWidth() - PAD
+    local y       = 0
+    local used    = 0
 
     if #columns == 0 then
-        PaintNote(cells[1], PAD, LIST_Y, usable, "Nobody to show yet.")
-        cells[1].name:SetJustifyH("CENTER")
-        return
+        local row = AcquireRow(1)
+        used = 1
+        row.head:ClearAllPoints()
+        row.head:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", PAD, 0)
+        row.head:SetWidth(width)
+        row.head:SetText("Nobody to show yet.")
+        row.head:SetTextColor(0.5, 0.5, 0.5)
+        row.head:Show()
+        y = ROW_H
     end
-    cells[1].name:SetJustifyH("LEFT")
 
-    -- The fixed width is kept while the columns fit, and only given up once
-    -- there are too many ranks for it. A ladder that happens to span five
-    -- ranks should not have wider columns than one that spans six.
-    local colW = math.min(FULL_COL_W, usable / #columns)
-    if colW < MIN_COL then colW = MIN_COL end
-    local left = math.floor((pane:GetWidth() - #columns * colW) / 2)
+    -- Columns() runs lowest first, which reads right going left to right and
+    -- wrong going top to bottom: a ladder is read from the top.
+    for i = #columns, 1, -1 do
+        local col = columns[i]
+        used = used + 1
+        local row = AcquireRow(used)
 
-    divider:ClearAllPoints()
-    divider:SetPoint("TOPLEFT", pane, "TOPLEFT", left, -(HEAD_Y + 14))
-    divider:SetPoint("TOPRIGHT", pane, "TOPLEFT", left + #columns * colW, -(HEAD_Y + 14))
-    divider:Show()
+        if used > 1 then y = y + 8 end
+        row.rule:ClearAllPoints()
+        row.rule:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", PAD, -y)
+        row.rule:SetSize(width, 1)
+        row.rule:Show()
+        y = y + 6
 
-    for c = 1, #headers do
-        local col  = columns[c]
-        local head = headers[c]
-        if not col then
-            head:Hide()
-        else
-            local x = left + (c - 1) * colW
-            head:ClearAllPoints()
-            head:SetPoint("TOPLEFT", pane, "TOPLEFT", x, -HEAD_Y)
-            head:SetWidth(colW - 10)
-            head:SetText(string.format("%s  |cff777777%d|r",
-                RR.RANK_SHORT[col.rank.id] or col.rank.name, #col.members))
-            head:SetTextColor(col.rank.color.r, col.rank.color.g, col.rank.color.b)
-            head:Show()
+        row.head:ClearAllPoints()
+        row.head:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", PAD, -y)
+        row.head:SetWidth(width)
+        row.head:SetText(string.format("%s  |cff777777%d|r",
+            col.rank.name, #col.members))
+        row.head:SetTextColor(col.rank.color.r, col.rank.color.g, col.rank.color.b)
+        row.head:Show()
+        y = y + ROW_H + 4
 
-            Rule(c, x, colW - 10, LIST_Y - 2,
-                math.min(FULL_ROWS, #col.members) * ROW_H)
-
-            for r = 1, FULL_ROWS do
-                local cell = cells[(c - 1) * FULL_ROWS + r]
-                local e    = col.members[r]
-                local y    = LIST_Y + (r - 1) * ROW_H
-                if e then
-                    Place(cell, x, y, colW - 10)
-                    PaintEntry(cell, e)
-                elseif r == FULL_ROWS and #col.members > FULL_ROWS then
-                    PaintNote(cell, x, y, colW - 10,
-                        string.format("+%d", #col.members - FULL_ROWS + 1))
-                else
-                    cell.name:Hide(); cell.score:Hide()
-                end
-            end
+        for _, e in ipairs(col.members) do
+            used = used + 1
+            local entryRow = AcquireRow(used)
+            PlaceIn(scrollChild, entryRow, PAD + 12, y, ROW_W)
+            PaintEntry(entryRow, e)
+            y = y + ROW_H
         end
+        y = y + 6
     end
+
+    for i = used + 1, #scrollRows do HideRow(scrollRows[i]) end
+    scrollChild:SetHeight(math.max(y, 1))
 
     footer:ClearAllPoints()
-    footer:SetPoint("TOPLEFT",  pane, "TOPLEFT",   PAD, -(LIST_Y + FULL_ROWS * ROW_H + 8))
-    footer:SetPoint("TOPRIGHT", pane, "TOPRIGHT", -PAD, -(LIST_Y + FULL_ROWS * ROW_H + 8))
+    footer:SetPoint("BOTTOMLEFT",  pane, "BOTTOMLEFT",   PAD, 6)
+    footer:SetPoint("BOTTOMRIGHT", pane, "BOTTOMRIGHT", -PAD, 6)
     footer:SetText(string.format("|cff888888%d shown across %d divisions|r",
         #entries, #columns))
     footer:Show()
@@ -445,17 +478,22 @@ local function BuildPane(p)
     lowerLine = Cell(p); lowerLine:SetJustifyH("CENTER")
     footer    = Cell(p); footer:SetJustifyH("CENTER")
 
-    divider = p:CreateTexture(nil, "ARTWORK")
-    divider:SetColorTexture(0.25, 0.30, 0.38, 0.9)
-    divider:SetHeight(1)
-    divider:SetPoint("TOPLEFT",  p, "TOPLEFT",   PAD, -(HEAD_Y + 14))
-    divider:SetPoint("TOPRIGHT", p, "TOPRIGHT", -PAD, -(HEAD_Y + 14))
-    divider:Hide()
-
     -- One pool, sized for whichever view needs more. The two never draw at the
     -- same time, so sharing it costs nothing and halves the frames created.
-    headers = {}
-    for c = 1, #RR.RANKS do headers[c] = Cell(p) end
+    -- The full view scrolls: a guild can put two hundred names in one list,
+    -- and there is no layout that fits that into 440px.
+    scroll = CreateFrame("ScrollFrame", nil, p, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT",     p, "TOPLEFT",      PAD, -(MODE_Y + 26))
+    scroll:SetPoint("BOTTOMRIGHT", p, "BOTTOMRIGHT", -(PAD + 22), 24)
+    scroll:Hide()
+
+    scrollChild = CreateFrame("Frame", nil, scroll)
+    scrollChild:SetSize(1, 1)
+    scroll:SetScrollChild(scrollChild)
+    scroll:SetScript("OnSizeChanged", function(self, w)
+        scrollChild:SetWidth(w)
+    end)
+    scrollRows = {}
 
     rules = {}
     for c = 1, #RR.RANKS do
@@ -465,7 +503,7 @@ local function BuildPane(p)
     end
 
     cells = {}
-    for i = 1, math.max(DIV_COLS * DIV_ROWS, #RR.RANKS * FULL_ROWS) do
+    for i = 1, DIV_COLS * DIV_ROWS do
         cells[i] = MakeCell(p)
     end
 
