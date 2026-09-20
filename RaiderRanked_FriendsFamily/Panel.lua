@@ -39,6 +39,7 @@ local RULE_GAP             = 8
 -- purpose: a name and a four-digit score do not need the whole width, and
 -- pulling the two ends that far apart makes them hard to read as one row.
 local ROW_W                = 320
+local SCROLLBAR_W          = 22
 
 -- Guild and friends are told apart by colour rather than by being separate
 -- lists, so one look covers both. Self is white: it is the row being looked
@@ -141,6 +142,10 @@ end
 --- Places a cell inside a column, with the score right-aligned against the
 --- rule so the digits stack instead of drifting with the name length.
 local function PlaceIn(parent, cell, x, y, width)
+    -- SetWidth throws on a negative number, and one throw inside a draw
+    -- loop leaves half the rows placed and the other half wherever they
+    -- were - which looks like a layout bug rather than an error.
+    width = math.max(width or 0, 40)
     local nameW = math.floor(width * NAME_SHARE)
 
     cell.name:ClearAllPoints()
@@ -321,8 +326,19 @@ end
 local function DrawFull(entries)
     scroll:Show()
 
+    -- The scroll child inherits its width from OnSizeChanged, which only
+    -- fires when the size actually changes - and it does not on the first
+    -- draw, because the frame already had its size from its anchors. Left at
+    -- the placeholder width, every SetWidth below gets a negative number,
+    -- which throws and aborts the draw half finished.
+    local width = scroll:GetWidth()
+    if not width or width < 80 then
+        width = pane:GetWidth() - PAD * 2 - SCROLLBAR_W
+    end
+    scrollChild:SetWidth(width)
+    width = width - PAD
+
     local columns = Columns(entries)
-    local width   = scrollChild:GetWidth() - PAD
     local y       = 0
     local used    = 0
 
@@ -484,11 +500,11 @@ local function BuildPane(p)
     -- and there is no layout that fits that into 440px.
     scroll = CreateFrame("ScrollFrame", nil, p, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT",     p, "TOPLEFT",      PAD, -(MODE_Y + 26))
-    scroll:SetPoint("BOTTOMRIGHT", p, "BOTTOMRIGHT", -(PAD + 22), 24)
+    scroll:SetPoint("BOTTOMRIGHT", p, "BOTTOMRIGHT", -(PAD + SCROLLBAR_W), 24)
     scroll:Hide()
 
     scrollChild = CreateFrame("Frame", nil, scroll)
-    scrollChild:SetSize(1, 1)
+    scrollChild:SetSize(pane and pane:GetWidth() or 600, 1)
     scroll:SetScrollChild(scrollChild)
     scroll:SetScript("OnSizeChanged", function(self, w)
         scrollChild:SetWidth(w)
