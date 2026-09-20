@@ -24,8 +24,19 @@ local HEAD_Y   = 80      -- division bounds, or the column headers
 local LIST_Y   = HEAD_Y + 22
 
 local DIV_COLS, DIV_ROWS   = 3, 17   -- names inside one division
-local FULL_ROWS            = 17      -- rows per rank column in the full view
+local FULL_ROWS            = 15      -- rows per rank column in the full view
+
+-- Columns are a fixed width and the block is centred in whatever is left,
+-- rather than stretched to the edges. Stretching puts the names against the
+-- window frame and leaves the gap in the middle, which reads as two tables.
+local DIV_COL_W            = 200
+local FULL_COL_W           = 118
 local MIN_COL              = 62
+
+-- How much of a column the name gets; the score takes the rest, right-aligned
+-- against the rule between them.
+local NAME_SHARE           = 0.66
+local RULE_GAP             = 8
 
 -- Guild and friends are told apart by colour rather than by being separate
 -- lists, so one look covers both. Self is white: it is the row being looked
@@ -38,7 +49,7 @@ local COLOR = {
 
 local pane, filterButtons, modeButtons
 local title, leftArrow, rightArrow, upperLine, lowerLine, footer
-local headers, cells, divider
+local headers, cells, rules, divider
 local activeFilter, activeMode = "all", "division"
 local viewIndex                              -- into RR.RANKS, highest first
 
@@ -116,25 +127,71 @@ local function Cell(parent, template)
     return fs
 end
 
-local function Place(fs, x, y, width)
-    fs:ClearAllPoints()
-    fs:SetPoint("TOPLEFT", pane, "TOPLEFT", x, -y)
-    fs:SetWidth(width)
+--- A cell is a pair of regions, not one string. Name and score have to line
+--- up down the column, and a single font string cannot do that with a
+--- proportional font - padding with spaces lands somewhere different on every
+--- row.
+local function MakeCell(parent)
+    return { name = Cell(parent), score = Cell(parent) }
 end
 
-local function PaintEntry(fs, e)
-    fs:SetText(string.format("%s  |cff777777%d|r", Ambiguate(e.name, "guild"), e.score))
+--- Places a cell inside a column, with the score right-aligned against the
+--- rule so the digits stack instead of drifting with the name length.
+local function Place(cell, x, y, width)
+    local nameW = math.floor(width * NAME_SHARE)
+
+    cell.name:ClearAllPoints()
+    cell.name:SetPoint("TOPLEFT", pane, "TOPLEFT", x, -y)
+    cell.name:SetWidth(nameW)
+
+    cell.score:ClearAllPoints()
+    cell.score:SetPoint("TOPLEFT", pane, "TOPLEFT", x + nameW + RULE_GAP, -y)
+    cell.score:SetWidth(width - nameW - RULE_GAP)
+    cell.score:SetJustifyH("RIGHT")
+end
+
+local function PaintEntry(cell, e)
+    cell.name:SetText(Ambiguate(e.name, "guild"))
     local rgb = e.isSelf and COLOR.self or COLOR[e.origin] or COLOR.guild
-    fs:SetTextColor(rgb[1], rgb[2], rgb[3])
-    fs:Show()
+    cell.name:SetTextColor(rgb[1], rgb[2], rgb[3])
+    cell.name:Show()
+
+    cell.score:SetText(tostring(e.score))
+    cell.score:SetTextColor(0.62, 0.62, 0.66)
+    cell.score:Show()
+end
+
+--- One plain line per cell, used where a cell carries a message rather than
+--- an entry.
+local function PaintNote(cell, x, y, width, text)
+    cell.name:ClearAllPoints()
+    cell.name:SetPoint("TOPLEFT", pane, "TOPLEFT", x, -y)
+    cell.name:SetWidth(width)
+    cell.name:SetText(text)
+    cell.name:SetTextColor(0.5, 0.5, 0.5)
+    cell.name:Show()
+    cell.score:Hide()
 end
 
 local function HideAll()
-    for _, fs in ipairs(cells) do fs:Hide() end
+    for _, cell in ipairs(cells) do cell.name:Hide(); cell.score:Hide() end
     for _, fs in ipairs(headers) do fs:Hide() end
+    for _, rule in ipairs(rules) do rule:Hide() end
     upperLine:Hide(); lowerLine:Hide(); footer:Hide()
     title:Hide(); leftArrow:Hide(); rightArrow:Hide()
     divider:Hide()
+end
+
+--- The vertical rule between name and score, drawn per column rather than
+--- per row so it reads as one line down the table.
+local function Rule(index, x, width, top, height)
+    local rule = rules[index]
+    if not rule then return end
+    rule:ClearAllPoints()
+    rule:SetPoint("TOPLEFT", pane, "TOPLEFT",
+        x + math.floor(width * NAME_SHARE) + math.floor(RULE_GAP / 2), -top)
+    rule:SetSize(1, height)
+    rule:Show()
 end
 
 -- ── Division view ──────────────────────────────────────────────────────────
@@ -171,33 +228,41 @@ local function DrawDivision(entries)
     end
     upperLine:Show()
 
-    local colW = (pane:GetWidth() - PAD * 2) / DIV_COLS
+    -- Only as many columns as there are people to fill them, so a division
+    -- with four members is a short centred block rather than three columns
+    -- with two of them empty.
+    local used  = math.max(1, math.min(DIV_COLS, math.ceil(#members / DIV_ROWS)))
+    local left  = math.floor((pane:GetWidth() - used * DIV_COL_W) / 2)
     local slots = DIV_COLS * DIV_ROWS
+
+    for c = 1, used do
+        Rule(c, left + (c - 1) * DIV_COL_W, DIV_COL_W, LIST_Y - 2,
+            math.min(DIV_ROWS, #members - (c - 1) * DIV_ROWS) * ROW_H)
+    end
+
     for i = 1, slots do
-        local fs = cells[i]
-        local e  = members[i]
+        local cell = cells[i]
+        local e    = members[i]
         -- Column-major, so reading down a column follows the ranking instead
         -- of jumping across the panel every name.
-        local x = PAD + math.floor((i - 1) / DIV_ROWS) * colW
+        local x = left + math.floor((i - 1) / DIV_ROWS) * DIV_COL_W
         local y = LIST_Y + ((i - 1) % DIV_ROWS) * ROW_H
         if e then
-            Place(fs, x, y, colW - 8)
-            PaintEntry(fs, e)
+            Place(cell, x, y, DIV_COL_W - 10)
+            PaintEntry(cell, e)
         elseif i == slots and #members > slots then
-            Place(fs, x, y, colW - 8)
-            fs:SetText(string.format("+%d more", #members - slots + 1))
-            fs:SetTextColor(0.5, 0.5, 0.5)
-            fs:Show()
+            PaintNote(cell, x, y, DIV_COL_W - 10,
+                string.format("+%d more", #members - slots + 1))
         else
-            fs:Hide()
+            cell.name:Hide(); cell.score:Hide()
         end
     end
 
     if #members == 0 then
-        Place(cells[1], PAD, LIST_Y, pane:GetWidth() - PAD * 2)
-        cells[1]:SetText("Nobody here.")
-        cells[1]:SetTextColor(0.5, 0.5, 0.5)
-        cells[1]:Show()
+        PaintNote(cells[1], PAD, LIST_Y, pane:GetWidth() - PAD * 2, "Nobody here.")
+        cells[1].name:SetJustifyH("CENTER")
+    else
+        cells[1].name:SetJustifyH("LEFT")
     end
 
     local y = LIST_Y + DIV_ROWS * ROW_H + 8
@@ -221,17 +286,25 @@ end
 local function DrawFull(entries)
     local columns = Columns(entries)
     local usable  = pane:GetWidth() - PAD * 2
-    local colW    = #columns > 0 and math.max(MIN_COL, usable / #columns) or usable
-
-    divider:Show()
 
     if #columns == 0 then
-        Place(cells[1], PAD, LIST_Y, usable)
-        cells[1]:SetText("Nobody to show yet.")
-        cells[1]:SetTextColor(0.5, 0.5, 0.5)
-        cells[1]:Show()
+        PaintNote(cells[1], PAD, LIST_Y, usable, "Nobody to show yet.")
+        cells[1].name:SetJustifyH("CENTER")
         return
     end
+    cells[1].name:SetJustifyH("LEFT")
+
+    -- The fixed width is kept while the columns fit, and only given up once
+    -- there are too many ranks for it. A ladder that happens to span five
+    -- ranks should not have wider columns than one that spans six.
+    local colW = math.min(FULL_COL_W, usable / #columns)
+    if colW < MIN_COL then colW = MIN_COL end
+    local left = math.floor((pane:GetWidth() - #columns * colW) / 2)
+
+    divider:ClearAllPoints()
+    divider:SetPoint("TOPLEFT", pane, "TOPLEFT", left, -(HEAD_Y + 14))
+    divider:SetPoint("TOPRIGHT", pane, "TOPLEFT", left + #columns * colW, -(HEAD_Y + 14))
+    divider:Show()
 
     for c = 1, #headers do
         local col  = columns[c]
@@ -239,26 +312,30 @@ local function DrawFull(entries)
         if not col then
             head:Hide()
         else
-            local x = PAD + (c - 1) * colW
-            Place(head, x, HEAD_Y, colW - 6)
-            head:SetText(string.format("%s  %d",
+            local x = left + (c - 1) * colW
+            head:ClearAllPoints()
+            head:SetPoint("TOPLEFT", pane, "TOPLEFT", x, -HEAD_Y)
+            head:SetWidth(colW - 10)
+            head:SetText(string.format("%s  |cff777777%d|r",
                 RR.RANK_SHORT[col.rank.id] or col.rank.name, #col.members))
             head:SetTextColor(col.rank.color.r, col.rank.color.g, col.rank.color.b)
             head:Show()
 
+            Rule(c, x, colW - 10, LIST_Y - 2,
+                math.min(FULL_ROWS, #col.members) * ROW_H)
+
             for r = 1, FULL_ROWS do
-                local fs = cells[(c - 1) * FULL_ROWS + r]
-                local e  = col.members[r]
+                local cell = cells[(c - 1) * FULL_ROWS + r]
+                local e    = col.members[r]
+                local y    = LIST_Y + (r - 1) * ROW_H
                 if e then
-                    Place(fs, x, LIST_Y + (r - 1) * ROW_H, colW - 6)
-                    PaintEntry(fs, e)
+                    Place(cell, x, y, colW - 10)
+                    PaintEntry(cell, e)
                 elseif r == FULL_ROWS and #col.members > FULL_ROWS then
-                    Place(fs, x, LIST_Y + (r - 1) * ROW_H, colW - 6)
-                    fs:SetText(string.format("+%d", #col.members - FULL_ROWS + 1))
-                    fs:SetTextColor(0.5, 0.5, 0.5)
-                    fs:Show()
+                    PaintNote(cell, x, y, colW - 10,
+                        string.format("+%d", #col.members - FULL_ROWS + 1))
                 else
-                    fs:Hide()
+                    cell.name:Hide(); cell.score:Hide()
                 end
             end
         end
@@ -380,9 +457,16 @@ local function BuildPane(p)
     headers = {}
     for c = 1, #RR.RANKS do headers[c] = Cell(p) end
 
+    rules = {}
+    for c = 1, #RR.RANKS do
+        rules[c] = p:CreateTexture(nil, "ARTWORK")
+        rules[c]:SetColorTexture(0.30, 0.34, 0.42, 0.7)
+        rules[c]:Hide()
+    end
+
     cells = {}
     for i = 1, math.max(DIV_COLS * DIV_ROWS, #RR.RANKS * FULL_ROWS) do
-        cells[i] = Cell(p)
+        cells[i] = MakeCell(p)
     end
 
     viewIndex = OwnIndex(Divisions())
