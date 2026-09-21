@@ -1483,7 +1483,10 @@ function RR:DebugUnitWings(unit)
             print(string.format("  Host frame:      %s lvl %d, scale %.3f, visible %s",
                 d.host:GetFrameStrata(), d.host:GetFrameLevel(),
                 d.host:GetEffectiveScale(), tostring(d.host:IsVisible())))
-            print(string.format("  Highest in host: lvl %d (wings must beat this)",
+            -- Not a target any more: the wings deliberately stay well
+            -- below this, since the markers are up here too. It is printed
+            -- so a frame that levels its own art oddly still shows up.
+            print(string.format("  Highest in host: lvl %d (wings stay under this)",
                 MaxLevelIn(d.host, d.frame, MAX_LEVEL_SCAN_DEPTH)))
         end
     else
