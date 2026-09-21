@@ -1575,11 +1575,32 @@ local function SafeShown(obj)
     return ok and shown or false
 end
 
+--- Whether a region covers the given rectangle.
+---
+--- The comparison happens inside the guard, not outside it. Under 12.x these
+--- coordinates can come back as secret numbers, and a secret number throws
+--- when it is compared rather than when it is read - so handing them to the
+--- caller to compare moves the throw, it does not prevent it.
+local function SafeOverlaps(region, pl, pr, pb, pt)
+    local ok, hit = pcall(function()
+        local l, r = region:GetLeft(), region:GetRight()
+        local b, t = region:GetBottom(), region:GetTop()
+        if not (l and r and b and t) then return false end
+        return l < pr and r > pl and b < pt and t > pb
+    end)
+    return ok and hit or false
+end
+
 local function SafeRect(region)
     local ok, l, r, b, t = pcall(function()
         return region:GetLeft(), region:GetRight(), region:GetBottom(), region:GetTop()
     end)
     if ok and l and r and b and t then return l, r, b, t end
+end
+
+local function IsTexture(region)
+    local ok, kind = pcall(function() return region:GetObjectType() end)
+    return ok and kind == "Texture"
 end
 
 local function SafeList(frame, getter)
@@ -1600,13 +1621,14 @@ local function CollectMarkers(host, portrait, skip)
         if depth <= 0 or frame == skip then return end
 
         for _, region in ipairs(SafeList(frame, frame.GetRegions)) do
-            if region ~= portrait and SafeShown(region) then
+            -- Textures only. A name or a health figure sits on the same layer
+            -- and over the same portrait, and copying one would put a second
+            -- copy of the text on the frame.
+            if region ~= portrait and IsTexture(region) and SafeShown(region) then
                 local ok, layer = pcall(function() return region:GetDrawLayer() end)
-                if ok and MARKER_LAYERS[layer] then
-                    local l, r, b, t = SafeRect(region)
-                    if l and l < pr and r > pl and b < pt and t > pb then
-                        table.insert(out, region)
-                    end
+                if ok and MARKER_LAYERS[layer]
+                    and SafeOverlaps(region, pl, pr, pb, pt) then
+                    table.insert(out, region)
                 end
             end
         end
