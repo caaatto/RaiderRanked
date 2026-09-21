@@ -935,10 +935,17 @@ local mirrorTicker
 
 local function ApplyMirror(m)
     m.frame:SetShown(m.host:IsVisible())
-    if m.raise then
-        -- bumpStrata: mirrored overlays are siblings of their host, not
-        -- children, so they have no hierarchy advantage to fall back on.
-        RR:RaiseOverlayAbove(m.frame, m.host, true)
+
+    -- Level with the container that holds the portrait, rather than above
+    -- everything in the host. On equal levels the draw layer decides, and the
+    -- dragon sits on ARTWORK while the portrait is on BACKGROUND - so it
+    -- covers the portrait and still loses to the markers, which Blizzard
+    -- keeps one level up. Lifting the overlay instead, by level or by strata,
+    -- buries those markers, and they cannot be raised back: writing to a unit
+    -- frame taints it, which is the whole reason this overlay is a sibling.
+    if m.levelHost then
+        m.frame:SetFrameStrata(m.levelHost:GetFrameStrata())
+        m.frame:SetFrameLevel(m.levelHost:GetFrameLevel())
     end
     -- Match the host's on-screen scale exactly: our own effective scale is
     -- UIParent's times whatever we set, so divide the target out.
@@ -985,60 +992,20 @@ function MaxLevelIn(frame, skip, depth)
     return MaxLevelAmong(max, skip, depth, frame:GetChildren())
 end
 
-local STRATA_ORDER = {
-    "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG",
-    "FULLSCREEN", "FULLSCREEN_DIALOG", "TOOLTIP",
-}
-local STRATA_INDEX = {}
-for i, name in ipairs(STRATA_ORDER) do STRATA_INDEX[name] = i end
-
-local function NextStrataUp(strata)
-    local i = STRATA_INDEX[strata]
-    if not i then return "MEDIUM" end
-    return STRATA_ORDER[math.min(i + 1, #STRATA_ORDER)]
-end
-
---- Raises an overlay above everything inside `host`.
----
---- A fixed level offset does not work here: the portrait sits in a nested
---- container whose siblings carry levels of their own, and those differ per
---- unit frame and per UI setup. Measuring the subtree is the only way to pick
---- a level without guessing. `frame` is excluded from the measurement so
---- repeated calls settle instead of ratcheting upwards.
----
---- Worth re-running periodically rather than once: Blizzard's own unit frame
---- update runs off the same events we do, so a single measurement taken at
---- target change can be based on levels raised a moment later.
----
----@param bumpStrata boolean|nil
----   Put the overlay one strata above the host instead of alongside it.
----   Needed for overlays that are not children of their host: measured levels
----   alone did not put them in front in practice (a wing frame measured 1000
----   levels above the portrait's container still rendered behind it), and
----   strata outranks level unconditionally. Frames that ARE children of their
----   host already win by hierarchy and must not be bumped, or they would jump
----   out in front of unrelated UI.
-function RR:RaiseOverlayAbove(frame, host, bumpStrata)
-    if not frame or not host then return end
-    local strata = host:GetFrameStrata()
-    frame:SetFrameStrata(bumpStrata and NextStrataUp(strata) or strata)
-    frame:SetFrameLevel(MaxLevelIn(host, frame, MAX_LEVEL_SCAN_DEPTH) + 1)
-end
-
 --- Makes `frame` track `host`'s visibility and scale. Safe to call repeatedly.
----@param raise boolean|nil  also keep the frame levelled above the host
-function RR:MirrorHostFrame(frame, host, raise)
+---@param levelHost Frame|nil  take strata and level from this frame each tick
+function RR:MirrorHostFrame(frame, host, levelHost)
     if not frame or not host then return end
     for _, m in ipairs(hostMirrors) do
         if m.frame == frame then
-            m.host  = host
-            m.raise = raise
+            m.host      = host
+            m.levelHost = levelHost or m.levelHost
             ApplyMirror(m)
             return
         end
     end
 
-    local mirror = { frame = frame, host = host, raise = raise }
+    local mirror = { frame = frame, host = host, levelHost = levelHost }
     table.insert(hostMirrors, mirror)
     ApplyMirror(mirror)   -- immediately, so nothing pops on the first tick
 
@@ -1101,8 +1068,8 @@ end
 --- same frame level, so there is no gap to drop the dragon into. The dragon
 --- takes the level above both, and LiftMarkers raises them clear again.
 ---
---- RaiseOverlayAbove is not used: it lifts an overlay above everything inside
---- its host, which would bury the PvP badge under the dragon as well.
+--- Lifting the overlay above everything in the host is the obvious move and
+--- the wrong one: it buries the PvP badge under the dragon as well.
 ---
 --- The levels are measured rather than offset from PlayerFrame, because
 --- Blizzard sets them itself and Edit Mode rebuilds the frame.
@@ -1464,6 +1431,16 @@ function RR:DebugUnitWings(unit)
     if portrait then
         print("  Portrait type:   " .. tostring(portrait:GetObjectType()))
         print("  Portrait size:   " .. tostring(portrait:GetWidth()) .. "x" .. tostring(portrait:GetHeight()))
+
+        -- Draw order is what goes wrong on these frames: the dragon has to
+        -- land level with the portrait container and under the markers.
+        local container = portrait:GetParent()
+        local d = unitWingData[unit]
+        print(string.format("  Levels: container %s %s   wings %s %s",
+            tostring(container and container:GetFrameLevel()),
+            tostring(container and container:GetFrameStrata()),
+            tostring(d and d.frame:GetFrameLevel()),
+            tostring(d and d.frame:GetFrameStrata())))
     else
         -- Walk the known frame tree to help diagnose the correct path
         print("  -- Frame tree walk:")
@@ -1526,10 +1503,10 @@ local function ResolveWingHost(unit, d)
     local getter = UNIT_PARENT_GETTERS[unit]
     d.host = getter and getter() or nil
     if d.host then
-        -- raise = true: the level is re-measured on every tick, not just when
-        -- the unit changes, so Blizzard raising its own levels afterwards
-        -- cannot leave the wings buried.
-        RR:MirrorHostFrame(d.frame, d.host, true)
+        -- The depth reference comes later, from UpdateUnitWings: it is the
+        -- portrait's own container, which is not known until the portrait has
+        -- been found.
+        RR:MirrorHostFrame(d.frame, d.host, nil)
     end
     return d.host
 end
@@ -1614,10 +1591,13 @@ function RR:UpdateUnitWings(unit)
     local xOffset = (atlas == WINGS_ATLAS_WINGED) and 10 or 0
     tex:ClearAllPoints()
     tex:SetPoint("CENTER", portrait, "CENTER", xOffset, 0)
-    -- As a child of the unit frame the hierarchy decided what drew on top; as
-    -- a sibling that is gone, so the overlay goes a strata up. /rr unitdbg
-    -- prints what it resolved to.
-    self:RaiseOverlayAbove(d.frame, d.host or portrait:GetParent(), true)
+    -- Depth is taken from whatever holds the portrait, so the dragon lands
+    -- between it and the markers. /rr wings debug <unit> prints the levels.
+    local container = portrait:GetParent()
+    if container then
+        d.levelHost = container
+        self:MirrorHostFrame(d.frame, d.host or container, container)
+    end
     tex:SetAtlas(atlas, false)
     tex:SetTexCoord(0, 1, 0, 1)   -- no flip (mirrored vs player portrait)
     ApplyWingsColor(tex, rank, false)   -- false = texture is not flipped
