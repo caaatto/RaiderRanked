@@ -223,7 +223,7 @@ get no rank line at all rather than a misleading one.
 A separate addon that ships in the same download, `RaiderRanked - Friends &
 Family`. It declares RaiderRanked as a dependency, so it can be unticked in the
 AddOns list on its own: unticked, none of its code loads, it sends nothing and
-stores nothing.
+it stores nothing.
 
 `/rrff` opens its tab in the score history window.
 
@@ -232,31 +232,55 @@ stores nothing.
 | `/rrff` | Open the Friends & Family tab |
 | `/rrff chat` | Print the guild board to chat |
 | `/rrff where` | Your score against every region and faction ladder |
-| `/rrff share` | Toggle sharing your score with the guild |
+| `/rrff poll` | Ask the guild and your friends to report in now |
+| `/rrff share` | Toggle sharing your score |
 
-### The guild board
+`/rrff dbg` prints what the RaiderIO fill-in actually sees, which is the first
+thing to check when somebody is missing from a board.
 
-Guild members ranked by M+ score, from three sources in order of how
-first-hand they are:
+### The tab
 
-1. **Guildmates running the module.** They answer with the score their own
-   client reports, over the same addon-message mechanism the live rank already
-   uses. Exact, but only while they are online.
+Two views over the same people, chosen with the buttons under the filter row.
+
+**Division** shows one rank at a time: the one you are in, bounded above by the
+score that leaves it and below by the score that put you in it. Arrows step
+through the other ranks, and opening the tab always lands on your own again.
+
+**Full** stacks every occupied rank, best first, divided by a rule, and scrolls.
+Side by side a rank column is only as wide as the window divided by however many
+ranks are occupied, which stops being enough for a name once a guild spreads
+out.
+
+Guild members are green and friends are light blue, so one view covers both;
+the filter above narrows to either. Somebody who is both appears once, as guild,
+since that is the figure with a roster behind it.
+
+### Where the scores come from
+
+Three sources, in order of how first-hand they are:
+
+1. **People running the module.** They answer with the score their own client
+   reports, over the same addon-message mechanism the live rank already uses.
+   Exact, but only while they are online. The guild is asked over the guild
+   channel; friends have no channel, so each is asked individually, character
+   friends by whisper and Battle.net friends by game account.
 2. **What was heard earlier**, kept across sessions with the date it was heard,
-   so the board does not start empty on every login. Entries older than 30 days
-   are dropped.
-3. **RaiderIO**, if it happens to be installed, for everyone else.
+   so a board does not start empty on every login. Entries older than 30 days
+   are dropped, and anything older than this session is shown with its age.
+3. **RaiderIO**, if it happens to be installed, for everyone else. It is an
+   optional source and never a requirement: without it the boards are thinner,
+   not broken.
 
 There is no fourth source, and that part is worth saying plainly: WoW exposes no
-way to read another player's M+ rating without a unit reference. The guild
-roster carries names, levels and classes, never scores. A guildmate who is
-offline, has never run the module and is unknown to RaiderIO therefore cannot
-appear at all.
+way to read another player's M+ rating without a unit reference. A guild roster
+carries names, levels and classes, never scores. So a guildmate who is offline,
+has never run the module and is unknown to RaiderIO cannot appear at all, and a
+Battle.net friend who is offline has no character attached to look up.
 
-The board says how much of your guild it actually covers:
+The guild board says how much of the roster it actually covers:
 
 ```
-Eternal Sunrise - 7 of 43 members with a score
+Sacred Dominion - 7 of 43 members with a score
 ```
 
 That line is the difference between a board that looks broken and one that is
@@ -264,8 +288,8 @@ honest about a limit it cannot do anything about. The figure grows on its own as
 more of the guild installs the module, or simply logs in while you are online.
 
 Sharing is on by default and can be turned off with `/rrff share`. Turning it
-off also takes you off other people's boards, rather than letting you read
-along without contributing.
+off also takes you off other people's boards, rather than letting you read along
+without contributing.
 
 ### Where you stand
 
@@ -274,7 +298,7 @@ once, best first. The difference between EU Alliance and EU Horde at the same
 score is often a whole rank, and it is invisible until the two sit next to each
 other.
 
-A placement as an ordinal - "#1,234 in EU" - is deliberately absent. That needs
+A placement as an ordinal, "#1,234 in EU", is deliberately absent. That needs
 the size of the field, and the population count lives in the threshold job's
 state file rather than in the addon. Realm placement is not collected at any
 point, and the job covers US and EU only, so a world placement would be a guess
@@ -312,13 +336,15 @@ Broadcasts pick their channel from the party category you are actually in: `INST
 
 ## Threshold Auto-Update
 
+The release archive carries both addon folders. The client reads them as two addons, and Friends & Family declares RaiderRanked as a dependency, so it stays disabled until the core is present.
+
 A daily GitHub Actions workflow fetches the M+ score distribution from Raider.IO for each region × faction combo (EU / NA × Horde / Alliance / All, plus a synthetic population-weighted `all` region), computes percentile cutoffs, patches `Cutoffs.lua` (all nine region/faction slots), `RankSystem.lua` (seed thresholds and Top 100 cutoff) and `ScoreHistory.lua` (the `SEASON_START` anchor and the `SEASON_NAME` label the archive files a finished season under), and uploads the updated addon to CurseForge.
 
 Both the active expansion and the active season are auto-detected from Raider.IO's `mythic-plus/static-data` endpoint on every run, so neither season rollovers (MN1 -> MN2) nor expansion rollovers (Midnight -> next) require a code change. The next scheduled run picks up the new slug, the patcher rewrites the constants from the new `seasonStart`, and CI ships an updated build. A `scripts/state.json` tracks last-known-good population, expansion, and season for a sanity guard that refuses to overwrite a healthy build with a half-empty Raider.IO snapshot, and as a fallback when static-data is unreachable. The script lives upstream in [caaatto/raiderranked-api](https://github.com/caaatto/raiderranked-api) and is mirrored byte-identical here.
 
 ### Versioning
 
-`## Version` in `RaiderRanked.toc` is the single source of truth, and it is what the WoW AddOns list shows.
+`## Version` in `RaiderRanked.toc` is the single source of truth, and it is what the WoW AddOns list shows. Friends & Family carries the same number in its own TOC: CI writes both, and a hand bump has to do the same, or the AddOns list shows one of the two as stale for no reason of its own.
 
 - **Feature release** - bump the minor by hand and commit: `1.11.4` → `1.12.0`
 - **Automated release** - CI increments the last component from wherever that leaves it: `1.12.0` → `1.12.1` → `1.12.2`
