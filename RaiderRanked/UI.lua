@@ -936,16 +936,19 @@ local mirrorTicker
 local function ApplyMirror(m)
     m.frame:SetShown(m.host:IsVisible())
 
-    -- Level with the container that holds the portrait, rather than above
-    -- everything in the host. On equal levels the draw layer decides, and the
-    -- dragon sits on ARTWORK while the portrait is on BACKGROUND - so it
-    -- covers the portrait and still loses to the markers, which Blizzard
-    -- keeps one level up. Lifting the overlay instead, by level or by strata,
-    -- buries those markers, and they cannot be raised back: writing to a unit
-    -- frame taints it, which is the whole reason this overlay is a sibling.
+    -- Just clear of the container that holds the portrait, rather than above
+    -- everything in the host. Above the whole host buries the PvP badge and
+    -- the role icon; level with the container is not enough, because these
+    -- frames do not put the portrait on BACKGROUND the way PlayerFrame does,
+    -- and an equal level then leaves the dragon behind it.
+    --
+    -- The markers sit further up still and are left alone. They cannot be
+    -- moved back down anyway: writing to a unit frame taints it, which is the
+    -- whole reason this overlay is a sibling rather than a child.
     if m.levelHost then
         m.frame:SetFrameStrata(m.levelHost:GetFrameStrata())
-        m.frame:SetFrameLevel(m.levelHost:GetFrameLevel())
+        m.frame:SetFrameLevel(
+            MaxLevelIn(m.levelHost, m.frame, MAX_LEVEL_SCAN_DEPTH) + 1)
     end
     -- Match the host's on-screen scale exactly: our own effective scale is
     -- UIParent's times whatever we set, so divide the target out.
@@ -1436,9 +1439,14 @@ function RR:DebugUnitWings(unit)
         -- land level with the portrait container and under the markers.
         local container = portrait:GetParent()
         local d = unitWingData[unit]
-        print(string.format("  Levels: container %s %s   wings %s %s",
+        local layer, sub = portrait:GetDrawLayer()
+        print(string.format("  Portrait layer:  %s/%s", tostring(layer), tostring(sub)))
+        print(string.format("  Levels: container %s (subtree max %s) %s",
             tostring(container and container:GetFrameLevel()),
-            tostring(container and container:GetFrameStrata()),
+            tostring(container and MaxLevelIn(container, d and d.frame,
+                MAX_LEVEL_SCAN_DEPTH)),
+            tostring(container and container:GetFrameStrata())))
+        print(string.format("  Wings:  level %s %s",
             tostring(d and d.frame:GetFrameLevel()),
             tostring(d and d.frame:GetFrameStrata())))
     else
