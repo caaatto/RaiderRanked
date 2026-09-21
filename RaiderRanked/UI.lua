@@ -1500,6 +1500,8 @@ function RR:DebugUnitWings(unit)
                 d.host:GetEffectiveScale(), tostring(d.host:IsVisible())))
             print(string.format("  Highest in host: lvl %d (wings must beat this)",
                 MaxLevelIn(d.host, d.frame, MAX_LEVEL_SCAN_DEPTH)))
+            print(string.format("  Markers mirrored: %s",
+                tostring(d.markerCount or 0)))
         end
     else
         print("  Wing data:       not yet created")
@@ -1549,12 +1551,192 @@ local function EnsureUnitWingData(unit)
     return d
 end
 
+-- ── Marker mirroring ────────────────────────────────────────────────────────
+-- The dragon on a unit frame only becomes visible by going a strata up, and a
+-- strata outranks every level below it - so it covers the PvP badge and the
+-- role icon as well. Those cannot be raised back: raising them means writing
+-- to the unit frame, and that taints it, which is the whole reason this
+-- overlay is a sibling rather than a child.
+--
+-- So they are drawn a second time, on top. Reading a Blizzard region and
+-- anchoring to one are both taint-free, so a copy can be pinned to the
+-- original and given the same art. The original stays where it is, hidden
+-- under the dragon; what the player sees is the copy, in the same place.
+--
+-- Which regions count is decided by draw layer and by overlap with the
+-- portrait, never by name. The names differ per frame type, and guessing them
+-- is how the rest of this file has gone wrong before.
+
+local MARKER_LAYERS = { OVERLAY = true, HIGHLIGHT = true }
+local EMPTY = {}
+
+local function SafeShown(obj)
+    local ok, shown = pcall(function() return obj:IsShown() end)
+    return ok and shown or false
+end
+
+--- Whether a region covers the given rectangle.
+---
+--- The comparison happens inside the guard, not outside it. Under 12.x these
+--- coordinates can come back as secret numbers, and a secret number throws
+--- when it is compared rather than when it is read - so handing them to the
+--- caller to compare moves the throw, it does not prevent it.
+local function SafeOverlaps(region, pl, pr, pb, pt)
+    local ok, hit = pcall(function()
+        local l, r = region:GetLeft(), region:GetRight()
+        local b, t = region:GetBottom(), region:GetTop()
+        if not (l and r and b and t) then return false end
+        return l < pr and r > pl and b < pt and t > pb
+    end)
+    return ok and hit or false
+end
+
+local function SafeRect(region)
+    local ok, l, r, b, t = pcall(function()
+        return region:GetLeft(), region:GetRight(), region:GetBottom(), region:GetTop()
+    end)
+    if ok and l and r and b and t then return l, r, b, t end
+end
+
+local function IsTexture(region)
+    local ok, kind = pcall(function() return region:GetObjectType() end)
+    return ok and kind == "Texture"
+end
+
+--- Whether a region sits on a layer a marker would sit on.
+---
+--- The lookup is inside the guard for the same reason the overlap test is:
+--- a draw layer can come back as a secret string, and using one as a table
+--- key throws just as comparing a secret number does. The cast bar under a
+--- target frame answers this way.
+local function SafeMarkerLayer(region)
+    local ok, hit = pcall(function()
+        return MARKER_LAYERS[region:GetDrawLayer()] == true
+    end)
+    return ok and hit or false
+end
+
+local function SafeList(frame, getter)
+    local ok, list = pcall(function() return { getter(frame) } end)
+    return ok and list or EMPTY
+end
+
+--- Every texture the host draws over the portrait.
+---@param host Frame       the unit frame
+---@param portrait Region  its portrait, used as the overlap test
+---@param skip Frame       our own overlay, which must not mirror itself
+local function CollectMarkers(host, portrait, skip)
+    local out = {}
+    local pl, pr, pb, pt = SafeRect(portrait)
+    if not pl then return out end
+
+    local function Walk(frame, depth)
+        if depth <= 0 or frame == skip then return end
+
+        for _, region in ipairs(SafeList(frame, frame.GetRegions)) do
+            -- Textures only. A name or a health figure sits on the same layer
+            -- and over the same portrait, and copying one would put a second
+            -- copy of the text on the frame.
+            if region ~= portrait and IsTexture(region) and SafeShown(region)
+                and SafeMarkerLayer(region)
+                and SafeOverlaps(region, pl, pr, pb, pt) then
+                table.insert(out, region)
+            end
+        end
+
+        for _, child in ipairs(SafeList(frame, frame.GetChildren)) do
+            if SafeShown(child) then Walk(child, depth - 1) end
+        end
+    end
+
+    Walk(host, MAX_LEVEL_SCAN_DEPTH)
+    return out
+end
+
+--- Copies one region's art onto another texture.
+---
+--- Atlas first: an atlas carries its own coordinates, and asking a texture for
+--- its file path when it was set from an atlas gives a path without them.
+local function CopyArt(copy, region)
+    local okAtlas, atlas = pcall(function() return region:GetAtlas() end)
+    if okAtlas and atlas then
+        copy:SetAtlas(atlas, false)
+    else
+        local okTex, tex = pcall(function() return region:GetTexture() end)
+        if not (okTex and tex) then return false end
+        copy:SetTexture(tex)
+
+        local okC, a, b, c, d, e, f, g, h = pcall(function()
+            return region:GetTexCoord()
+        end)
+        if okC and a then copy:SetTexCoord(a, b, c, d, e, f, g, h) end
+    end
+
+    local okV, r, g, b, a = pcall(function() return region:GetVertexColor() end)
+    if okV and r then copy:SetVertexColor(r, g, b, a or 1) end
+
+    local okA, alpha = pcall(function() return region:GetAlpha() end)
+    copy:SetAlpha(okA and alpha or 1)
+    return true
+end
+
+--- Draws the host's markers again, above the dragon.
+local function MirrorMarkers(d, portrait)
+    if not (d and d.frame and d.host and portrait) then return end
+
+    if not d.markerFrame then
+        -- A child of our own overlay, so it needs no strata of its own: a
+        -- child draws above its parent, which is exactly the relationship we
+        -- could not get between the overlay and the unit frame.
+        local f = CreateFrame("Frame", nil, d.frame)
+        f:SetAllPoints(d.frame)
+        f.copies = {}
+        d.markerFrame = f
+    end
+
+    local mf = d.markerFrame
+    mf:SetFrameLevel(d.frame:GetFrameLevel() + 1)
+    mf:Show()
+
+    local markers = CollectMarkers(d.host, portrait, d.frame)
+    d.markerCount = #markers
+
+    for i, region in ipairs(markers) do
+        local copy = mf.copies[i]
+        if not copy then
+            copy = mf:CreateTexture(nil, "OVERLAY")
+            mf.copies[i] = copy
+        end
+
+        -- Pinned to the original rather than positioned by hand: anchoring to
+        -- a Blizzard region is taint-free, and it keeps the copy in step when
+        -- Blizzard moves or resizes the icon.
+        copy:ClearAllPoints()
+        local okPoint = pcall(function() copy:SetAllPoints(region) end)
+
+        if okPoint and CopyArt(copy, region) then
+            copy:Show()
+        else
+            copy:Hide()
+        end
+    end
+
+    for i = #markers + 1, #mf.copies do mf.copies[i]:Hide() end
+end
+
+local function HideMarkers(d)
+    if d and d.markerFrame then d.markerFrame:Hide() end
+end
+
 function RR:UpdateUnitWings(unit)
     -- Checked before anything is built: with the option off the addon has no
     -- business creating frames around the unit frames at all.
     if not (RR.db and RR.db.showUnitWings ~= false) then
         local existing = unitWingData[unit]
-        if existing then existing.tex:Hide() end
+        if existing then
+            existing.tex:Hide()
+            HideMarkers(existing)
+        end
         return
     end
 
@@ -1571,6 +1753,7 @@ function RR:UpdateUnitWings(unit)
     if forced then
         if not UnitExists(unit) then
             tex:Hide()
+            HideMarkers(d)
             return
         end
         rank  = self.RANK_BY_ID["CHALLENGER"]
@@ -1578,6 +1761,7 @@ function RR:UpdateUnitWings(unit)
     else
         if not UnitExists(unit) or not UnitIsPlayer(unit) or not UnitIsConnected(unit) then
             tex:Hide()
+            HideMarkers(d)
             return
         end
 
@@ -1585,6 +1769,7 @@ function RR:UpdateUnitWings(unit)
         local level = UnitLevel(unit)
         if level and level > 0 and level < RR.MIN_SCORED_LEVEL then
             tex:Hide()
+            HideMarkers(d)
             return
         end
 
@@ -1592,6 +1777,7 @@ function RR:UpdateUnitWings(unit)
         rank  = score and self:GetRankForScore(score)
         if not rank or rank.id == "UNRANKED" then
             tex:Hide()
+            HideMarkers(d)
             return
         end
     end
@@ -1599,6 +1785,7 @@ function RR:UpdateUnitWings(unit)
     local portrait = GetUnitPortraitRegion(unit)
     if not portrait then
         tex:Hide()
+        HideMarkers(d)
         return
     end
 
@@ -1624,6 +1811,9 @@ function RR:UpdateUnitWings(unit)
     tex:SetAlpha(0.85)
     tex:SetBlendMode("BLEND")
     tex:Show()
+
+    -- Drawn after the dragon, because they have to end up on top of it.
+    MirrorMarkers(d, portrait)
 end
 
 function RR:UpdateAllUnitWings()
@@ -1633,6 +1823,20 @@ function RR:UpdateAllUnitWings()
 end
 
 function RR:InitUnitWings()
+    -- A second beat, slower than the mirror ticker. Markers appear and
+    -- disappear without an event this addon listens for - a PvP flag drops,
+    -- somebody takes lead - and a copy that outlives its original is worse
+    -- than a late one. Only frames actually wearing wings are walked, so the
+    -- usual cost of this is nothing.
+    C_Timer.NewTicker(1, function()
+        for unit, d in pairs(unitWingData) do
+            if d.tex and d.tex:IsShown() then
+                local portrait = GetUnitPortraitRegion(unit)
+                if portrait then MirrorMarkers(d, portrait) end
+            end
+        end
+    end)
+
     local f = CreateFrame("Frame")
     f:RegisterEvent("PLAYER_TARGET_CHANGED")
     f:RegisterEvent("PLAYER_FOCUS_CHANGED")

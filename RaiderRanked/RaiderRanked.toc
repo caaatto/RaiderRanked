@@ -2,7 +2,7 @@
 ## Title: RaiderRanked
 ## Notes: League of Legends-style ranked system based on Raider.io Mythic+ scores
 ## Author: Catto
-## Version: 1.14.56
+## Version: 1.16.0
 ## IconTexture: Interface\Icons\inv_12_trinket_raid_dreamrift_gazeofthealnseer
 ## SavedVariables: RaiderRankedDB
 ## OptionalDeps: RaiderIO
@@ -25,3 +25,4 @@ UI.lua
 Panels.lua
 Animation.lua
 Tests.lua
+API.lua

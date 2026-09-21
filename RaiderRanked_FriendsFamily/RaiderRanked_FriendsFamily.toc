@@ -1,0 +1,14 @@
+## Interface: 120100
+## Title: RaiderRanked |cff888888- Friends & Family|r
+## Notes: Guild and friend leaderboards for RaiderRanked, and where you stand in the field.
+## Author: Catto
+## Version: 1.16.0
+## IconTexture: Interface\Icons\inv_12_trinket_raid_dreamrift_gazeofthealnseer
+## Dependencies: RaiderRanked
+## OptionalDeps: RaiderIO
+## SavedVariables: RaiderRankedFriendsDB
+
+GuildScores.lua
+FriendScores.lua
+Placement.lua
+Panel.lua

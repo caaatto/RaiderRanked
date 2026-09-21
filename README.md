@@ -6,7 +6,7 @@ Players receive a rank with rank-up animations, portrait wings, tooltip integrat
 
 ## Installation
 
-Download from [CurseForge](https://www.curseforge.com/wow/addons/raiderranked) or copy the `RaiderRanked/` folder into your `World of Warcraft/_retail_/Interface/AddOns/` directory.
+Download from [CurseForge](https://www.curseforge.com/wow/addons/raiderranked) or copy the `RaiderRanked/` folder into your `World of Warcraft/_retail_/Interface/AddOns/` directory. The download also carries `RaiderRanked_FriendsFamily/`, the optional guild and placement module; copy it alongside the first to get it, or leave it out.
 
 ## Commands
 
@@ -217,6 +217,68 @@ still exist.
 
 Only max-level characters can be meaningfully unranked, so lower-level units
 get no rank line at all rather than a misleading one.
+
+## Friends & Family
+
+A separate addon that ships in the same download, `RaiderRanked - Friends &
+Family`. It declares RaiderRanked as a dependency, so it can be unticked in the
+AddOns list on its own: unticked, none of its code loads, it sends nothing and
+stores nothing.
+
+`/rrff` opens its tab in the score history window.
+
+| Command | Description |
+|---|---|
+| `/rrff` | Open the Friends & Family tab |
+| `/rrff chat` | Print the guild board to chat |
+| `/rrff where` | Your score against every region and faction ladder |
+| `/rrff share` | Toggle sharing your score with the guild |
+
+### The guild board
+
+Guild members ranked by M+ score, from three sources in order of how
+first-hand they are:
+
+1. **Guildmates running the module.** They answer with the score their own
+   client reports, over the same addon-message mechanism the live rank already
+   uses. Exact, but only while they are online.
+2. **What was heard earlier**, kept across sessions with the date it was heard,
+   so the board does not start empty on every login. Entries older than 30 days
+   are dropped.
+3. **RaiderIO**, if it happens to be installed, for everyone else.
+
+There is no fourth source, and that part is worth saying plainly: WoW exposes no
+way to read another player's M+ rating without a unit reference. The guild
+roster carries names, levels and classes, never scores. A guildmate who is
+offline, has never run the module and is unknown to RaiderIO therefore cannot
+appear at all.
+
+The board says how much of your guild it actually covers:
+
+```
+Eternal Sunrise - 7 of 43 members with a score
+```
+
+That line is the difference between a board that looks broken and one that is
+honest about a limit it cannot do anything about. The figure grows on its own as
+more of the guild installs the module, or simply logs in while you are online.
+
+Sharing is on by default and can be turned off with `/rrff share`. Turning it
+off also takes you off other people's boards, rather than letting you read
+along without contributing.
+
+### Where you stand
+
+`/rrff where` measures your score against all nine region and faction ladders at
+once, best first. The difference between EU Alliance and EU Horde at the same
+score is often a whole rank, and it is invisible until the two sit next to each
+other.
+
+A placement as an ordinal - "#1,234 in EU" - is deliberately absent. That needs
+the size of the field, and the population count lives in the threshold job's
+state file rather than in the addon. Realm placement is not collected at any
+point, and the job covers US and EU only, so a world placement would be a guess
+with two regions missing.
 
 ## Rank-Up Pop-Up
 

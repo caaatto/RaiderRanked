@@ -91,7 +91,8 @@ jobs:
           # only exists from 3.13 on, so this keeps the line endings intact.
           raw = toc.read_bytes().decode("utf-8")
 
-          m = re.search(r"^## Version:[ \t]*(.+?)[ \t]*\r?$", raw, re.M)
+          VERSION_RE = r"^## Version:[ \t]*(.+?)[ \t]*\r?$"
+          m = re.search(VERSION_RE, raw, re.M)
           if not m:
               raise SystemExit("no '## Version:' line in RaiderRanked.toc")
 
@@ -104,6 +105,18 @@ jobs:
           # Splice over the captured version only, so the line ending survives.
           start, end = m.span(1)
           toc.write_bytes((raw[:start] + new + raw[end:]).encode("utf-8"))
+
+          # The module carries the same version, or the AddOns list shows
+          # one of the two as stale for no reason of its own.
+          module = pathlib.Path(
+              "RaiderRanked_FriendsFamily/RaiderRanked_FriendsFamily.toc")
+          if module.exists():
+              mraw = module.read_bytes().decode("utf-8")
+              mm = re.search(VERSION_RE, mraw, re.M)
+              if mm:
+                  ms, me = mm.span(1)
+                  module.write_bytes(
+                      (mraw[:ms] + new + mraw[me:]).encode("utf-8"))
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
               fh.write(f"version={new}\n")
@@ -122,7 +135,7 @@ jobs:
         run: |
           git config user.name "Catto"
           git config user.email "info@catto.at"
-          git add ${{ steps.diff.outputs.files }} RaiderRanked/RaiderRanked.toc
+          git add ${{ steps.diff.outputs.files }} RaiderRanked/RaiderRanked.toc RaiderRanked_FriendsFamily/RaiderRanked_FriendsFamily.toc
 
           if [ "${{ steps.diff.outputs.changed }}" = "true" ]; then
             MSG="update thresholds $(date -u +'%Y-%m-%d') (v${VERSION})"
@@ -137,7 +150,7 @@ jobs:
       - name: Package addon
         if: steps.diff.outputs.release == 'true'
         run: |
-          zip -r RaiderRanked.zip RaiderRanked/ \
+          zip -r RaiderRanked.zip RaiderRanked/ RaiderRanked_FriendsFamily/ \
             -x "RaiderRanked/Tools/*" "RaiderRanked/Debug/*" "RaiderRanked/tests/*"
 
       - name: Upload to CurseForge
