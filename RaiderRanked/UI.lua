@@ -1483,11 +1483,44 @@ function RR:DebugUnitWings(unit)
             print(string.format("  Host frame:      %s lvl %d, scale %.3f, visible %s",
                 d.host:GetFrameStrata(), d.host:GetFrameLevel(),
                 d.host:GetEffectiveScale(), tostring(d.host:IsVisible())))
-            -- Not a target any more: the wings deliberately stay well
-            -- below this, since the markers are up here too. It is printed
-            -- so a frame that levels its own art oddly still shows up.
-            print(string.format("  Highest in host: lvl %d (wings stay under this)",
+            print(string.format("  Highest in host: lvl %d",
                 MaxLevelIn(d.host, d.frame, MAX_LEVEL_SCAN_DEPTH)))
+
+            -- What actually sits between the portrait and the top of the
+            -- frame. The wings have to clear whatever covers the portrait
+            -- without clearing the markers, and those two are only
+            -- distinguishable by name.
+            local found = {}
+            local function Walk(frame, depth)
+                if depth <= 0 or frame == d.frame then return end
+                local ok, name = pcall(function() return frame:GetDebugName() end)
+                local okL, lvl = pcall(function() return frame:GetFrameLevel() end)
+                if okL and lvl then
+                    table.insert(found, {
+                        level = lvl,
+                        name  = (ok and name or "?"):gsub(".*%.", ""),
+                        -- Both halves guarded: the second call was outside
+                        -- the pcall and threw on the first forbidden frame,
+                        -- which killed the listing before it printed a line.
+                        shown = select(2, pcall(function()
+                            return frame:IsShown()
+                        end)) and true or false,
+                    })
+                end
+                local okC, kids = pcall(function() return { frame:GetChildren() } end)
+                for _, child in ipairs(okC and kids or {}) do
+                    Walk(child, depth - 1)
+                end
+            end
+            Walk(d.host, MAX_LEVEL_SCAN_DEPTH)
+            table.sort(found, function(a, b) return a.level > b.level end)
+
+            print("  Frames in host, deepest level first:")
+            for i = 1, math.min(12, #found) do
+                local f = found[i]
+                print(string.format("    lvl %-5d %-34s %s", f.level, f.name,
+                    f.shown and "" or "(hidden)"))
+            end
         end
     else
         print("  Wing data:       not yet created")
