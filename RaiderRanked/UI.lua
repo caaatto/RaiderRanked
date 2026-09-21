@@ -928,39 +928,10 @@ end
 -- still follows the frame. What a UIParent child no longer inherits is the
 -- host's visibility and scale - scale matters because texture sizes come from
 -- atlas dimensions and unit frames are scalable in Edit Mode. Both are
--- mirrored here; draw order is handled by SetOverlayLevel.
+-- mirrored here; draw order is set from the portrait's own container.
 
-local hostMirrors = {}
-local mirrorTicker
-
-local function ApplyMirror(m)
-    m.frame:SetShown(m.host:IsVisible())
-
-    -- Just clear of the container that holds the portrait, rather than above
-    -- everything in the host. Above the whole host buries the PvP badge and
-    -- the role icon; level with the container is not enough, because these
-    -- frames do not put the portrait on BACKGROUND the way PlayerFrame does,
-    -- and an equal level then leaves the dragon behind it.
-    --
-    -- The markers sit further up still and are left alone. They cannot be
-    -- moved back down anyway: writing to a unit frame taints it, which is the
-    -- whole reason this overlay is a sibling rather than a child.
-    if m.levelHost then
-        m.frame:SetFrameStrata(m.levelHost:GetFrameStrata())
-        m.frame:SetFrameLevel(
-            MaxLevelIn(m.levelHost, m.frame, MAX_LEVEL_SCAN_DEPTH) + 1)
-    end
-    -- Match the host's on-screen scale exactly: our own effective scale is
-    -- UIParent's times whatever we set, so divide the target out.
-    local uiScale = UIParent:GetEffectiveScale()
-    if uiScale and uiScale > 0 then
-        local want = m.host:GetEffectiveScale() / uiScale
-        if want > 0 and math.abs(m.frame:GetScale() - want) > 0.001 then
-            m.frame:SetScale(want)
-        end
-    end
-end
-
+-- Declared ahead of the mirrors below, which call MaxLevelIn: further down
+-- it would be a global nil at the point they run.
 -- Deep enough to reach the bottom of a retail unit frame. Levels that matter
 -- can sit several containers down (UnitFrame → Container → PortraitContainer →
 -- …), and a walk that stops short reports a maximum that is too low.
@@ -993,6 +964,37 @@ function MaxLevelIn(frame, skip, depth)
     local max = frame:GetFrameLevel()
     if depth <= 0 then return max end
     return MaxLevelAmong(max, skip, depth, frame:GetChildren())
+end
+
+local hostMirrors = {}
+local mirrorTicker
+
+local function ApplyMirror(m)
+    m.frame:SetShown(m.host:IsVisible())
+
+    -- Just clear of the container that holds the portrait, rather than above
+    -- everything in the host. Above the whole host buries the PvP badge and
+    -- the role icon; level with the container is not enough, because these
+    -- frames do not put the portrait on BACKGROUND the way PlayerFrame does,
+    -- and an equal level then leaves the dragon behind it.
+    --
+    -- The markers sit further up still and are left alone. They cannot be
+    -- moved back down anyway: writing to a unit frame taints it, which is the
+    -- whole reason this overlay is a sibling rather than a child.
+    if m.levelHost then
+        m.frame:SetFrameStrata(m.levelHost:GetFrameStrata())
+        m.frame:SetFrameLevel(
+            MaxLevelIn(m.levelHost, m.frame, MAX_LEVEL_SCAN_DEPTH) + 1)
+    end
+    -- Match the host's on-screen scale exactly: our own effective scale is
+    -- UIParent's times whatever we set, so divide the target out.
+    local uiScale = UIParent:GetEffectiveScale()
+    if uiScale and uiScale > 0 then
+        local want = m.host:GetEffectiveScale() / uiScale
+        if want > 0 and math.abs(m.frame:GetScale() - want) > 0.001 then
+            m.frame:SetScale(want)
+        end
+    end
 end
 
 --- Makes `frame` track `host`'s visibility and scale. Safe to call repeatedly.
@@ -1187,7 +1189,6 @@ function RR:DebugWings()
     end
 end
 
-
 -- Returns the correct atlas for a given rank + score.
 local function GetWingsAtlas(rank, score)
     if not rank or not rank.wingScore then return WINGS_ATLAS_PLAIN end
@@ -1286,7 +1287,6 @@ function RR:UpdatePortraitWings()
         and PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.PlayerRestLoop
     if ri and ri.SetPointsOffset then ri:SetPointsOffset(87, 14) end
 end
-
 
 
 --- Draws the portrait wings at a rank the character has not earned.
