@@ -1570,55 +1570,70 @@ end
 local MARKER_LAYERS = { OVERLAY = true, HIGHLIGHT = true }
 local EMPTY = {}
 
+-- Every guard below follows one rule: whatever the guarded call returns is
+-- reduced to a plain value *inside* the pcall, never outside it.
+--
+-- Under 12.x a protected frame hands back secret values, and a secret value
+-- throws when it is used, not when it is read. Comparing one throws, indexing
+-- with one throws, and testing one for truth throws - which means the usual
+-- `local ok, v = pcall(...)  return ok and v` leaks: the `and v` is itself a
+-- test on the secret. Three separate crashes in this file came from that one
+-- shape before it was written down.
+
 local function SafeShown(obj)
-    local ok, shown = pcall(function() return obj:IsShown() end)
-    return ok and shown or false
+    local ok, shown = pcall(function()
+        return obj:IsShown() and true or false
+    end)
+    if ok then return shown end
+    return false
 end
 
 --- Whether a region covers the given rectangle.
----
---- The comparison happens inside the guard, not outside it. Under 12.x these
---- coordinates can come back as secret numbers, and a secret number throws
---- when it is compared rather than when it is read - so handing them to the
---- caller to compare moves the throw, it does not prevent it.
 local function SafeOverlaps(region, pl, pr, pb, pt)
     local ok, hit = pcall(function()
         local l, r = region:GetLeft(), region:GetRight()
         local b, t = region:GetBottom(), region:GetTop()
         if not (l and r and b and t) then return false end
-        return l < pr and r > pl and b < pt and t > pb
+        return (l < pr and r > pl and b < pt and t > pb) and true or false
     end)
-    return ok and hit or false
+    if ok then return hit end
+    return false
 end
 
+--- A region's rectangle, or nothing when it cannot be read as plain numbers.
 local function SafeRect(region)
     local ok, l, r, b, t = pcall(function()
-        return region:GetLeft(), region:GetRight(), region:GetBottom(), region:GetTop()
+        local a1, a2 = region:GetLeft(), region:GetRight()
+        local a3, a4 = region:GetBottom(), region:GetTop()
+        -- Forced through arithmetic inside the guard: a secret number survives
+        -- being returned, and the caller would then throw on the first test.
+        if not (a1 and a2 and a3 and a4) then return nil end
+        return a1 + 0, a2 + 0, a3 + 0, a4 + 0
     end)
-    if ok and l and r and b and t then return l, r, b, t end
+    if ok and l then return l, r, b, t end
 end
 
 local function IsTexture(region)
-    local ok, kind = pcall(function() return region:GetObjectType() end)
-    return ok and kind == "Texture"
+    local ok, hit = pcall(function()
+        return region:GetObjectType() == "Texture"
+    end)
+    if ok then return hit end
+    return false
 end
 
 --- Whether a region sits on a layer a marker would sit on.
----
---- The lookup is inside the guard for the same reason the overlap test is:
---- a draw layer can come back as a secret string, and using one as a table
---- key throws just as comparing a secret number does. The cast bar under a
---- target frame answers this way.
 local function SafeMarkerLayer(region)
     local ok, hit = pcall(function()
         return MARKER_LAYERS[region:GetDrawLayer()] == true
     end)
-    return ok and hit or false
+    if ok then return hit end
+    return false
 end
 
 local function SafeList(frame, getter)
     local ok, list = pcall(function() return { getter(frame) } end)
-    return ok and list or EMPTY
+    if ok then return list end
+    return EMPTY
 end
 
 --- Every texture the host draws over the portrait.
@@ -1657,30 +1672,36 @@ end
 ---
 --- Atlas first: an atlas carries its own coordinates, and asking a texture for
 --- its file path when it was set from an atlas gives a path without them.
+--- Copies one region's art onto another texture.
+---
+--- The whole copy happens inside one guard rather than value by value.
+--- Reading an atlas name or a vertex colour can hand back a secret, and
+--- deciding what to do with it outside the guard is the leak this file keeps
+--- running into. If any part of it is unreadable the copy is simply not made.
+---
+--- Atlas first: an atlas carries its own coordinates, and asking a texture
+--- for its file path when it was set from an atlas gives a path without them.
 local function CopyArt(copy, region)
-    local okAtlas, atlas = pcall(function() return region:GetAtlas() end)
-    if okAtlas and atlas then
-        copy:SetAtlas(atlas, false)
-    else
-        local okTex, tex = pcall(function() return region:GetTexture() end)
-        if not (okTex and tex) then return false end
-        copy:SetTexture(tex)
+    local ok, done = pcall(function()
+        local atlas = region:GetAtlas()
+        if atlas then
+            copy:SetAtlas(atlas, false)
+        else
+            local tex = region:GetTexture()
+            if not tex then return false end
+            copy:SetTexture(tex)
+            copy:SetTexCoord(region:GetTexCoord())
+        end
 
-        local okC, a, b, c, d, e, f, g, h = pcall(function()
-            return region:GetTexCoord()
-        end)
-        if okC and a then copy:SetTexCoord(a, b, c, d, e, f, g, h) end
-    end
-
-    local okV, r, g, b, a = pcall(function() return region:GetVertexColor() end)
-    if okV and r then copy:SetVertexColor(r, g, b, a or 1) end
-
-    local okA, alpha = pcall(function() return region:GetAlpha() end)
-    copy:SetAlpha(okA and alpha or 1)
-    return true
+        copy:SetVertexColor(region:GetVertexColor())
+        copy:SetAlpha(region:GetAlpha() or 1)
+        return true
+    end)
+    if ok then return done end
+    return false
 end
 
---- Draws the host's markers again, above the dragon.
+--- Draws the host's markers again, above the dragon.--- Draws the host's markers again, above the dragon.
 local function MirrorMarkers(d, portrait)
     if not (d and d.frame and d.host and portrait) then return end
 
