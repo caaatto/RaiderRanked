@@ -1603,6 +1603,19 @@ local function IsTexture(region)
     return ok and kind == "Texture"
 end
 
+--- Whether a region sits on a layer a marker would sit on.
+---
+--- The lookup is inside the guard for the same reason the overlap test is:
+--- a draw layer can come back as a secret string, and using one as a table
+--- key throws just as comparing a secret number does. The cast bar under a
+--- target frame answers this way.
+local function SafeMarkerLayer(region)
+    local ok, hit = pcall(function()
+        return MARKER_LAYERS[region:GetDrawLayer()] == true
+    end)
+    return ok and hit or false
+end
+
 local function SafeList(frame, getter)
     local ok, list = pcall(function() return { getter(frame) } end)
     return ok and list or EMPTY
@@ -1624,12 +1637,10 @@ local function CollectMarkers(host, portrait, skip)
             -- Textures only. A name or a health figure sits on the same layer
             -- and over the same portrait, and copying one would put a second
             -- copy of the text on the frame.
-            if region ~= portrait and IsTexture(region) and SafeShown(region) then
-                local ok, layer = pcall(function() return region:GetDrawLayer() end)
-                if ok and MARKER_LAYERS[layer]
-                    and SafeOverlaps(region, pl, pr, pb, pt) then
-                    table.insert(out, region)
-                end
+            if region ~= portrait and IsTexture(region) and SafeShown(region)
+                and SafeMarkerLayer(region)
+                and SafeOverlaps(region, pl, pr, pb, pt) then
+                table.insert(out, region)
             end
         end
 
