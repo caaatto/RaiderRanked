@@ -359,16 +359,19 @@ Threshold runs that find no changes upload nothing. To ship a build that only ch
 2. Set these in the repo settings:
    - **Secret** `CF_API_TOKEN` - your CurseForge API token
    - **Variable** `CF_PROJECT_ID` - your CurseForge project ID
-   - **Variable** `CF_GAME_VERSIONS` - comma-separated game version IDs (e.g. `11567,11565`)
 3. The workflow runs daily at 00:00 UTC, or trigger manually from the Actions tab
 
-Game version IDs can be found via:
+The game version the file is listed under is not configured anywhere. The workflow reads `## Interface` from the core TOC, turns it into a version name, and looks that name up in CurseForge's own list before every upload. The same list by hand:
 ```bash
 curl -H "X-Api-Token: YOUR_TOKEN" https://wow.curseforge.com/api/game/versions
 ```
 
 ### Client compatibility
 
-`## Interface` lists the client builds the addon is flagged compatible with, currently `120105` for 12.1.5. The number is the version with two digits per part, so 12.1.5 becomes `120105`. When a patch lands, replace it in **both** TOCs, the core and Friends & Family. A stale flag only shows the addon as out of date, it does not break it, and the TOC is read at client start, so it clears on a full restart rather than a `/reload`.
+`## Interface` lists the client build the addon is flagged compatible with, currently `120105` for 12.1.5. The number is the version with two digits per part, so 12.1.5 becomes `120105`. A stale flag only shows the addon as out of date, it does not break it, and the TOC is read at client start, so it clears on a full restart rather than a `/reload`.
 
-The `CF_GAME_VERSIONS` repository variable is the same statement for CurseForge and has to move with it, since that is what the upload lists the file under. It holds CurseForge's own numeric ids rather than build numbers, and those ids have nothing to do with the build number, so the id for a new patch has to be looked up with the call above rather than derived.
+Releases keep it current on their own. Each run asks [wago.tools](https://wago.tools/api/builds) which retail build Blizzard has actually pushed, ignoring the background pre-download entries that announce the *next* patch, and writes the matching number into **both** TOCs, the core and Friends & Family. CurseForge then takes the same statement from that number: the upload resolves CurseForge's own id for `12.1.5` rather than having it configured anywhere.
+
+The bump waits until CurseForge lists the new version as well, so a release can never end up without an id to file the build under. Until then the run logs a warning and ships under the previous flag. Either service being unreachable does the same, since an out of date flag is cosmetic and a lost release run is not.
+
+Only a run that actually releases touches the TOCs, so a patch that lands on a day with no threshold changes is picked up by the next release, or straight away via **force_release** from the Actions tab.

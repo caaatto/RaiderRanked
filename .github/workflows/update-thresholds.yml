@@ -76,6 +76,77 @@ jobs:
             echo "Skipping upload."
           fi
 
+      # The compatibility flag follows the live retail build. wago.tools reports
+      # what Blizzard has actually pushed to the CDN; is_bgdl entries are the
+      # background pre-download of the *next* patch and would flag the addon for
+      # a build nobody is running yet.
+      #
+      # The bump waits until CurseForge lists the version too, so the upload can
+      # never be left without an id to file the build under. Anything that goes
+      # wrong here keeps whatever the TOCs already say: an out of date flag is
+      # cosmetic, a lost release run is not.
+      - name: Sync client compatibility
+        if: steps.diff.outputs.release == 'true'
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          CURRENT=$(sed -n 's/^## Interface:[ \t]*\([0-9]\{1,\}\).*/\1/p' \
+            RaiderRanked/RaiderRanked.toc | head -1)
+
+          LIVE=$(curl -sf --max-time 30 https://wago.tools/api/builds \
+            | jq -r '[.wow[] | select(.is_bgdl == false)]
+                     | max_by(.created_at) | .version') || LIVE=""
+
+          case "$LIVE" in
+            [0-9]*.[0-9]*.[0-9]*) NAME=$(echo "$LIVE" | cut -d. -f1-3) ;;
+            *)
+              echo "::warning::no live build from wago.tools, keeping ${CURRENT}"
+              exit 0 ;;
+          esac
+
+          # Two digits per part, so 12.1.5 becomes 120105.
+          WANT=$(echo "$NAME" | awk -F. '{printf "%d%02d%02d", $1, $2, $3}')
+          if [ "$WANT" = "$CURRENT" ]; then
+            echo "interface ${CURRENT} is current (live build ${LIVE})"
+            exit 0
+          fi
+
+          if ! curl -sf --max-time 30 -H "X-Api-Token: $CF_API_TOKEN" \
+            https://wow.curseforge.com/api/game/versions \
+            -o "$RUNNER_TEMP/cf-versions.json"; then
+            echo "::warning::CurseForge version list unreachable, keeping ${CURRENT}"
+            exit 0
+          fi
+
+          KNOWN=$(jq --arg n "$NAME" \
+            '[.[] | select(.name == $n and (.gameVersionTypeID // .gameVersionTypeId) == 517)] | length' \
+            "$RUNNER_TEMP/cf-versions.json")
+          if [ "$KNOWN" = "0" ]; then
+            echo "::warning::live build is ${NAME}, CurseForge does not list it yet, keeping ${CURRENT}"
+            exit 0
+          fi
+
+          python3 - "$WANT" <<'PY'
+          import pathlib, re, sys
+
+          want = sys.argv[1]
+          # Bytes, not text: the TOCs are CRLF, and a round trip through
+          # read_text would rewrite every line ending in the release commit.
+          for name in ("RaiderRanked/RaiderRanked.toc",
+                       "RaiderRanked_FriendsFamily/RaiderRanked_FriendsFamily.toc"):
+              toc = pathlib.Path(name)
+              if not toc.exists():
+                  continue
+              raw = toc.read_bytes().decode("utf-8")
+              new, hits = re.subn(r"^(## Interface:[ \t]*)\d+", r"\g<1>" + want,
+                                  raw, count=1, flags=re.M)
+              if not hits:
+                  raise SystemExit(f"no '## Interface:' line in {name}")
+              toc.write_bytes(new.encode("utf-8"))
+          PY
+
+          echo "interface ${CURRENT} -> ${WANT} (live build ${LIVE})"
+
       # The TOC's "## Version" is the single source of truth. Bump the minor by
       # hand when shipping a feature (1.11.4 -> 1.12.0); every automated release
       # increments the last component from wherever that leaves it.
@@ -153,11 +224,60 @@ jobs:
           zip -r RaiderRanked.zip RaiderRanked/ RaiderRanked_FriendsFamily/ \
             -x "RaiderRanked/Tools/*" "RaiderRanked/Debug/*" "RaiderRanked/tests/*"
 
+      # CurseForge wants its own numeric id for the game version, not the build
+      # number, and the two have nothing to do with each other. Resolving it per
+      # run from the TOC means a client patch only needs the TOC bumped. The id
+      # used to be kept by hand in a repository variable, where it went stale
+      # without anyone noticing and listed releases under the previous patch.
+      - name: Resolve CurseForge game version
+        if: steps.diff.outputs.release == 'true'
+        id: gameversion
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          IFACE=$(sed -n 's/^## Interface:[ \t]*\([0-9]\{1,\}\).*/\1/p' \
+            RaiderRanked/RaiderRanked.toc | head -1)
+          if [ -z "$IFACE" ]; then
+            echo "::error::no '## Interface:' line in RaiderRanked.toc"
+            exit 1
+          fi
+
+          # Two digits per version part, so 120105 is 12.1.5.
+          NAME="$((10#$IFACE / 10000)).$((10#$IFACE / 100 % 100)).$((10#$IFACE % 100))"
+          echo "interface ${IFACE} -> game version ${NAME}"
+
+          if ! curl -sf -H "X-Api-Token: $CF_API_TOKEN" \
+            https://wow.curseforge.com/api/game/versions \
+            -o "$RUNNER_TEMP/cf-versions.json"; then
+            echo "::error::could not fetch the CurseForge game version list"
+            exit 1
+          fi
+
+          # Retail is game version type 517. The same name can exist for a
+          # classic flavour too, and uploading against that one would list the
+          # file under the wrong game.
+          IDS=$(jq -c --arg n "$NAME" \
+            '[.[] | select(.name == $n and (.gameVersionTypeID // .gameVersionTypeId) == 517) | .id]' \
+            "$RUNNER_TEMP/cf-versions.json")
+
+          if [ "$IDS" = "[]" ]; then
+            echo "::error::CurseForge does not list a retail game version ${NAME}"
+            echo "the latest ones it does list:"
+            jq -r '[.[] | select((.gameVersionTypeID // .gameVersionTypeId) == 517)]
+                   | sort_by(.id) | .[-8:] | map(.name) | join(", ")' \
+              "$RUNNER_TEMP/cf-versions.json"
+            exit 1
+          fi
+
+          echo "ids=${IDS}" >> "$GITHUB_OUTPUT"
+          echo "game version ${NAME} -> ${IDS}"
+
       - name: Upload to CurseForge
         if: steps.diff.outputs.release == 'true'
         env:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
+          GAME_VERSIONS: ${{ steps.gameversion.outputs.ids }}
         run: |
           CHANGELOG=$(cat <<EOF
           Raider Ranked ${VERSION}
@@ -171,7 +291,7 @@ jobs:
           METADATA=$(jq -cn \
             --arg cl "$CHANGELOG" \
             --arg v "$VERSION" \
-            --argjson gv "[${{ vars.CF_GAME_VERSIONS }}]" \
+            --argjson gv "$GAME_VERSIONS" \
             '{changelog: $cl, changelogType: "text", displayName: ("Raider Ranked " + $v), gameVersions: $gv, releaseType: "release"}')
 
           # Their upload endpoint returns a 500 often enough to be worth sitting
