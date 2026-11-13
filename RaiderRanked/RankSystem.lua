@@ -47,7 +47,7 @@ RR.RANKS = {
         id        = "CHALLENGER",
         name      = "Challenger",
         minScore  = 4126,
-        wingScore = 4143,   -- always winged
+        wingScore = 4144,   -- always winged
         -- Wings use a gold→ice-blue gradient (see UI.lua ApplyWingsColor).
         -- This color is used for text, glow, and HUD elements.
         color     = { r = 1.000, g = 0.820, b = 0.000 },
@@ -62,7 +62,7 @@ RR.RANKS = {
         id        = "GRANDMASTER",
         name      = "Grandmaster",
         minScore  = 4014,
-        wingScore = 4037,
+        wingScore = 4039,
         color     = { r = 1.000, g = 0.180, b = 0.180 },
         icon      = MEDIA .. "Ranks\\grandmaster.png",
         emblem    = MEDIA .. "Emblems\\emblem-grandmaster.png",
@@ -74,8 +74,8 @@ RR.RANKS = {
     {
         id        = "MASTER",
         name      = "Master",
-        minScore  = 3888,
-        wingScore = 3921,
+        minScore  = 3889,
+        wingScore = 3922,
         color     = { r = 0.720, g = 0.220, b = 1.000 },
         icon      = MEDIA .. "Ranks\\master.png",
         emblem    = MEDIA .. "Emblems\\emblem-master.png",
@@ -87,8 +87,8 @@ RR.RANKS = {
     {
         id        = "DIAMOND",
         name      = "Diamond",
-        minScore  = 3634,
-        wingScore = 3721,
+        minScore  = 3636,
+        wingScore = 3723,
         color     = { r = 0.120, g = 0.420, b = 1.000 },
         icon      = MEDIA .. "Ranks\\diamond.png",
         emblem    = MEDIA .. "Emblems\\emblem-diamond.png",
@@ -100,8 +100,8 @@ RR.RANKS = {
     {
         id        = "EMERALD",
         name      = "Emerald",
-        minScore  = 3465,
-        wingScore = 3550,
+        minScore  = 3466,
+        wingScore = 3551,
         color     = { r = 0.040, g = 0.880, b = 0.420 },
         icon      = MEDIA .. "Ranks\\emerald.png",
         emblem    = MEDIA .. "Emblems\\emblem-emerald.png",
@@ -114,7 +114,7 @@ RR.RANKS = {
         id        = "PLATINUM",
         name      = "Platinum",
         minScore  = 3127,
-        wingScore = 3279,
+        wingScore = 3280,
         color     = { r = 0.000, g = 0.580, b = 0.720 },
         icon      = MEDIA .. "Ranks\\platinum.png",
         emblem    = MEDIA .. "Emblems\\emblem-platinum.png",
@@ -126,7 +126,7 @@ RR.RANKS = {
     {
         id        = "GOLD",
         name      = "Gold",
-        minScore  = 2779,
+        minScore  = 2780,
         wingScore = 3001,
         color     = { r = 1.000, g = 0.780, b = 0.000 },
         icon      = MEDIA .. "Ranks\\gold.png",
@@ -139,8 +139,8 @@ RR.RANKS = {
     {
         id        = "SILVER",
         name      = "Silver",
-        minScore  = 1420,
-        wingScore = 2373,
+        minScore  = 1421,
+        wingScore = 2374,
         color     = { r = 0.780, g = 0.880, b = 1.000 },
         icon      = MEDIA .. "Ranks\\silver.png",
         emblem    = MEDIA .. "Emblems\\emblem-silver.png",
@@ -153,7 +153,7 @@ RR.RANKS = {
         id        = "BRONZE",
         name      = "Bronze",
         minScore  = 334,
-        wingScore = 774,
+        wingScore = 775,
         color     = { r = 0.920, g = 0.500, b = 0.060 },
         icon      = MEDIA .. "Ranks\\bronze.png",
         emblem    = MEDIA .. "Emblems\\emblem-bronze.png",
