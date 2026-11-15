@@ -22,8 +22,8 @@ RR.CUTOFFS.eu.all = {
     CHALLENGER  = { minScore = 4128, wingScore = 4146 },
     GRANDMASTER = { minScore = 4015, wingScore = 4041 },
     MASTER      = { minScore = 3891, wingScore = 3924 },
-    DIAMOND     = { minScore = 3638, wingScore = 3726 },
-    EMERALD     = { minScore = 3469, wingScore = 3553 },
+    DIAMOND     = { minScore = 3639, wingScore = 3726 },
+    EMERALD     = { minScore = 3469, wingScore = 3554 },
     PLATINUM    = { minScore = 3129, wingScore = 3282 },
     GOLD        = { minScore = 2781, wingScore = 3002 },
     SILVER      = { minScore = 1422, wingScore = 2375 },
@@ -37,7 +37,7 @@ RR.CUTOFFS.eu.horde = {
     GRANDMASTER = { minScore = 3960, wingScore = 3985 },
     MASTER      = { minScore = 3785, wingScore = 3873 },
     DIAMOND     = { minScore = 3639, wingScore = 3712 },
-    EMERALD     = { minScore = 3443, wingScore = 3541 },
+    EMERALD     = { minScore = 3444, wingScore = 3541 },
     PLATINUM    = { minScore = 3134, wingScore = 3261 },
     GOLD        = { minScore = 2781, wingScore = 2936 },
     SILVER      = { minScore = 1422, wingScore = 2375 },
@@ -48,7 +48,7 @@ RR.CUTOFFS.eu.horde = {
 RR.CUTOFFS.eu.alliance = {
     top100Score = 4252,
     CHALLENGER  = { minScore = 4143, wingScore = 4146 },
-    GRANDMASTER = { minScore = 4096, wingScore = 4119 },
+    GRANDMASTER = { minScore = 4096, wingScore = 4120 },
     MASTER      = { minScore = 3931, wingScore = 4014 },
     DIAMOND     = { minScore = 3772, wingScore = 3852 },
     EMERALD     = { minScore = 3560, wingScore = 3666 },
@@ -60,13 +60,13 @@ RR.CUTOFFS.eu.alliance = {
 }
 
 RR.CUTOFFS.us.all = {
-    top100Score = 4189,
+    top100Score = 4190,
     CHALLENGER  = { minScore = 4062, wingScore = 4130 },
     GRANDMASTER = { minScore = 3954, wingScore = 4010 },
-    MASTER      = { minScore = 3793, wingScore = 3861 },
+    MASTER      = { minScore = 3794, wingScore = 3861 },
     DIAMOND     = { minScore = 3557, wingScore = 3647 },
     EMERALD     = { minScore = 3364, wingScore = 3447 },
-    PLATINUM    = { minScore = 3057, wingScore = 3176 },
+    PLATINUM    = { minScore = 3057, wingScore = 3177 },
     GOLD        = { minScore = 2682, wingScore = 2902 },
     SILVER      = { minScore = 1204, wingScore = 2158 },
     BRONZE      = { minScore =  326, wingScore =  667 },
@@ -74,7 +74,7 @@ RR.CUTOFFS.us.all = {
 }
 
 RR.CUTOFFS.us.horde = {
-    top100Score = 4189,
+    top100Score = 4190,
     CHALLENGER  = { minScore = 3916, wingScore = 4130 },
     GRANDMASTER = { minScore = 3866, wingScore = 3891 },
     MASTER      = { minScore = 3690, wingScore = 3778 },
@@ -88,12 +88,12 @@ RR.CUTOFFS.us.horde = {
 }
 
 RR.CUTOFFS.us.alliance = {
-    top100Score = 4189,
+    top100Score = 4190,
     CHALLENGER  = { minScore = 4129, wingScore = 4130 },
     GRANDMASTER = { minScore = 4071, wingScore = 4100 },
     MASTER      = { minScore = 3870, wingScore = 3971 },
     DIAMOND     = { minScore = 3696, wingScore = 3783 },
-    EMERALD     = { minScore = 3463, wingScore = 3580 },
+    EMERALD     = { minScore = 3464, wingScore = 3580 },
     PLATINUM    = { minScore = 3131, wingScore = 3261 },
     GOLD        = { minScore = 2682, wingScore = 2919 },
     SILVER      = { minScore = 1204, wingScore = 2158 },
@@ -105,9 +105,9 @@ RR.CUTOFFS.all.all = {
     top100Score = 4252,
     CHALLENGER  = { minScore = 4101, wingScore = 4139 },
     GRANDMASTER = { minScore = 3990, wingScore = 4028 },
-    MASTER      = { minScore = 3850, wingScore = 3898 },
-    DIAMOND     = { minScore = 3604, wingScore = 3693 },
-    EMERALD     = { minScore = 3425, wingScore = 3509 },
+    MASTER      = { minScore = 3851, wingScore = 3898 },
+    DIAMOND     = { minScore = 3605, wingScore = 3693 },
+    EMERALD     = { minScore = 3425, wingScore = 3510 },
     PLATINUM    = { minScore = 3099, wingScore = 3238 },
     GOLD        = { minScore = 2740, wingScore = 2960 },
     SILVER      = { minScore = 1331, wingScore = 2285 },
@@ -132,7 +132,7 @@ RR.CUTOFFS.all.horde = {
 RR.CUTOFFS.all.alliance = {
     top100Score = 4252,
     CHALLENGER  = { minScore = 4137, wingScore = 4139 },
-    GRANDMASTER = { minScore = 4085, wingScore = 4111 },
+    GRANDMASTER = { minScore = 4085, wingScore = 4112 },
     MASTER      = { minScore = 3905, wingScore = 3996 },
     DIAMOND     = { minScore = 3740, wingScore = 3823 },
     EMERALD     = { minScore = 3519, wingScore = 3630 },

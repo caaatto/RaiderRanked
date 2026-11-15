@@ -87,7 +87,7 @@ RR.RANKS = {
     {
         id        = "DIAMOND",
         name      = "Diamond",
-        minScore  = 3638,
+        minScore  = 3639,
         wingScore = 3726,
         color     = { r = 0.120, g = 0.420, b = 1.000 },
         icon      = MEDIA .. "Ranks\\diamond.png",
@@ -101,7 +101,7 @@ RR.RANKS = {
         id        = "EMERALD",
         name      = "Emerald",
         minScore  = 3469,
-        wingScore = 3553,
+        wingScore = 3554,
         color     = { r = 0.040, g = 0.880, b = 0.420 },
         icon      = MEDIA .. "Ranks\\emerald.png",
         emblem    = MEDIA .. "Emblems\\emblem-emerald.png",
